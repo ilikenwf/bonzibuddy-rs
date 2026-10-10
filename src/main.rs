@@ -25,7 +25,7 @@ use pet::{Action, Effect, Pet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::dpi::{LogicalSize, PhysicalPosition, Position};
-use winit::event::{ElementState, Event, KeyEvent, MouseButton, WindowEvent};
+use winit::event::{ElementState, Event, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Icon, Window, WindowAttributes, WindowLevel};
@@ -40,6 +40,46 @@ struct Opts {
     tts: bool,
 }
 
+/// Persisted user settings (`$XDG_CONFIG_HOME/bonzibuddy-rs.json`).
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+struct Config {
+    scale: f64,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config { scale: 1.0 }
+    }
+}
+
+fn config_path() -> Option<std::path::PathBuf> {
+    let dir = std::env::var_os("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            let key = if cfg!(windows) { "APPDATA" } else { "HOME" };
+            std::env::var_os(key).map(std::path::PathBuf::from)
+        })?;
+    Some(dir.join("bonzibuddy-rs.json"))
+}
+
+fn load_config() -> Config {
+    config_path()
+        .and_then(|p| std::fs::read(p).ok())
+        .and_then(|b| serde_json::from_slice(&b).ok())
+        .unwrap_or_default()
+}
+
+fn save_config(cfg: &Config) {
+    if let Some(p) = config_path() {
+        if let Some(dir) = p.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        if let Ok(b) = serde_json::to_vec_pretty(cfg) {
+            let _ = std::fs::write(p, b);
+        }
+    }
+}
 const ABOUT: &str = "BonziBuddy-rs v1.0\nA safe reimagining of the 1999 original.\nNo phone-home. No ads. No spyware.\n100% offline. Original character art.\nRight-click me for the menu!";
 
 struct MenuItem {
@@ -212,7 +252,7 @@ impl App {
 use render::Canvas;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut opts = Opts { scale: 1.0, matte: std::env::var("BONZI_MATTE").is_ok(), audio: true, tts: false };
+    let mut opts = Opts { scale: load_config().scale, matte: std::env::var("BONZI_MATTE").is_ok(), audio: true, tts: false };
     let args: Vec<String> = std::env::args().collect();
     let mut i = 1;
     while i < args.len() {
@@ -223,7 +263,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--tts" => opts.tts = true,
             "--assets" => { if let Some(p) = args.get(i + 1) { std::env::set_var("BONZI_ASSETS", p); } i += 1; }
             "-h" | "--help" => {
-                println!("bonzibuddy-rs — safe offline BonziBuddy. Flags: --scale N --matte --no-audio --tts --assets PATH");
+                println!("bonzibuddy-rs — safe offline BonziBuddy. Flags: --scale N --matte --no-audio --tts --assets PATH\nScroll wheel over the window resizes the buddy (persisted).");
                 return Ok(());
             }
             _ => {}
@@ -283,7 +323,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .with_decorations(false)
                 .with_transparent(!app.opts.matte)
                 .with_resizable(false)
-                .with_inner_size(LogicalSize::new(WIN_W, WIN_H));
+                .with_inner_size(LogicalSize::new(WIN_W as f64 * app.opts.scale, WIN_H as f64 * app.opts.scale));
             #[cfg(windows)]
             {
                 use winit::platform::windows::WindowAttributesExtWindows;
@@ -304,9 +344,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     (o.x, o.y, s.width as i32, s.height as i32)
                 })
                 .unwrap_or((0, 0, 1920, 1080));
+            let sf0 = window.scale_factor();
+            let ww = (WIN_W as f64 * app.opts.scale * sf0) as i32;
+            let wh = (WIN_H as f64 * app.opts.scale * sf0) as i32;
             window.set_outer_position(Position::Physical(PhysicalPosition::new(
-                ax + aw - WIN_W as i32 - 40,
-                ay + ah - WIN_H as i32 - 20,
+                ax + aw - ww - 40,
+                ay + ah - wh - 20,
             )));
             let window = Arc::new(window);
             if let Ok(ico) = image::open(app.assets.root().join("favicon.ico")) {
@@ -342,6 +385,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let _ = s.resize(size.width.max(1).try_into().unwrap(), size.height.max(1).try_into().unwrap());
                     }
                     app.size = (size.width.max(1), size.height.max(1));
+                }
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                let dy = match delta {
+                    MouseScrollDelta::LineDelta(_, y) => y as f64,
+                    MouseScrollDelta::PixelDelta(p) => p.y / 60.0,
+                };
+                if dy != 0.0 {
+                    let next = (app.opts.scale * (1.0 + 0.1 * dy.signum())).clamp(0.5, 4.0);
+                    if (next - app.opts.scale).abs() > f64::EPSILON {
+                        app.opts.scale = next;
+                        save_config(&Config { scale: next });
+                        if let Some(w) = &app.window {
+                            let _ = w.request_inner_size(LogicalSize::new(WIN_W as f64 * next, WIN_H as f64 * next));
+                        }
+                    }
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {

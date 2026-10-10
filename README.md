@@ -51,7 +51,9 @@ string in the tree is the crate `scoped-tls` (thread-local storage, not TLS).
 - Click to pet, right-click menu (joke / fact / song / trick / dance / walk / hide / about / quit).
 - Draggable always-on-top borderless window; walks along the bottom of the work area and turns at screen edges.
 - Original WAV sound effects (`CHORD.WAV`, `Snd1/2.wav`, `Intro2.wav`).
-- `--scale N` for DPI/size tuning; HiDPI scale factor honored automatically.
+- Scroll-wheel over the buddy resizes it (0.5×–4×), persisted across restarts
+  (`$XDG_CONFIG_HOME/bonzibuddy-rs.json`); `--scale N` sets it at launch and HiDPI
+  scale factors are honored automatically.
 - Zero network code, zero registry writes, zero install steps.
 
 ## Building & running
@@ -111,6 +113,6 @@ discretion.
 
 ## Roadmap
 
-- User-resizable buddy (scroll-wheel / menu, persisted) on top of `--scale`.
+- Menu +/- size items alongside scroll-wheel resize.
 - Optional local-LLM "brain": an OpenAPI-compatible client that pushes the
   same `pet::Action` values the offline engine already speaks (`src/pet.rs`).
