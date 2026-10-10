@@ -80,6 +80,52 @@ fn save_config(cfg: &Config) {
         }
     }
 }
+
+/// ALSA/JACK print connection-probe failures to stderr (C libraries) even when
+/// another backend ultimately works; silence them while probing devices.
+#[cfg(all(unix, feature = "audio"))]
+struct QuietStderr(i32);
+#[cfg(all(unix, feature = "audio"))]
+impl QuietStderr {
+    fn new() -> Self {
+        use std::os::fd::AsRawFd;
+        let saved = unsafe { libc::dup(2) };
+        if let Ok(null) = std::fs::File::open("/dev/null") {
+            unsafe { libc::dup2(null.as_raw_fd(), 2) };
+        }
+        QuietStderr(saved)
+    }
+}
+#[cfg(all(unix, feature = "audio"))]
+impl Drop for QuietStderr {
+    fn drop(&mut self) {
+        unsafe {
+            libc::fflush(std::ptr::null_mut());
+            libc::dup2(self.0, 2);
+            libc::close(self.0);
+        }
+    }
+}
+
+/// Open an output stream: default device first, then every enumerated device
+/// (covers JACK/PipeWire/ALSA ordering quirks where the "default" is busy).
+#[cfg(feature = "audio")]
+fn open_audio() -> Option<(rodio::OutputStream, rodio::OutputStreamHandle)> {
+    #[cfg(unix)]
+    let _quiet = QuietStderr::new();
+    if let Ok(x) = rodio::OutputStream::try_default() {
+        return Some(x);
+    }
+    use cpal::traits::HostTrait;
+    if let Ok(devs) = cpal::default_host().devices() {
+        for d in devs {
+            if let Ok(x) = rodio::OutputStream::try_from_device(&d) {
+                return Some(x);
+            }
+        }
+    }
+    None
+}
 const ABOUT: &str = "BonziBuddy-rs v1.0\nA safe reimagining of the 1999 original.\nNo phone-home. No ads. No spyware.\n100% offline. Original character art.\nRight-click me for the menu!";
 
 struct MenuItem {
@@ -99,17 +145,12 @@ const MENU: &[MenuItem] = &[
     MenuItem { label: "Quit", action: |p, _c| p.push(Action::Quit) },
 ];
 
-type SBuf = (
-    softbuffer::Context<Arc<Window>>,
-    softbuffer::Surface<Arc<Window>, Arc<Window>>,
-);
-
 struct App {
     assets: assets::Assets,
     content: content::Content,
     pet: Pet,
     opts: Opts,
-    sbuf: Option<SBuf>,
+    pixels: Option<pixels::Pixels<'static>>,
     window: Option<Arc<Window>>,
     size: (u32, u32),
     #[cfg(feature = "audio")]
@@ -178,7 +219,6 @@ impl App {
 
     fn render(&mut self) {
         let Some(window) = &self.window else { return };
-        let Some((_ctx, surface)) = &mut self.sbuf else { return };
         let (w, h) = self.size;
         let mut canvas = Canvas::new(w, h);
         if self.opts.matte {
@@ -240,12 +280,17 @@ impl App {
             }
         }
 
-        let pixels = canvas.to_u32();
-        let Ok(mut buf) = surface.buffer_mut() else { return };
-        for (o, p) in buf.iter_mut().zip(pixels) {
-            *o = p;
+        // Upload as premultiplied BGRA (Wayland/X11 compositor convention).
+        let Some(px) = &mut self.pixels else { return };
+        let frame = px.frame_mut();
+        for (dst, src) in frame.chunks_exact_mut(4).zip(canvas.px.chunks_exact(4)) {
+            let a = src[3] as u16;
+            dst[0] = (src[2] as u16 * a / 255) as u8;
+            dst[1] = (src[1] as u16 * a / 255) as u8;
+            dst[2] = (src[0] as u16 * a / 255) as u8;
+            dst[3] = a as u8;
         }
-        let _ = buf.present();
+        let _ = px.render();
     }
 }
 
@@ -284,7 +329,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         });
     #[cfg(feature = "audio")]
-    let audio = if opts.audio { rodio::OutputStream::try_default().ok() } else { None };
+    let audio = if opts.audio { open_audio() } else { None };
     #[cfg(feature = "audio")]
     if audio.is_none() && opts.audio {
         eprintln!("note: no audio device; running silent");
@@ -296,7 +341,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         pet: Pet::new(),
         opts,
         window: None,
-        sbuf: None,
+        pixels: None,
         size: (WIN_W, WIN_H),
         #[cfg(feature = "audio")]
         audio,
@@ -358,13 +403,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let _ = window.set_window_icon(Icon::from_rgba(img.into_raw(), iw, ih).ok());
             }
             let size = window.inner_size();
-            let ctx = softbuffer::Context::new(window.clone()).ok();
-            let surf = ctx.as_ref().and_then(|c| softbuffer::Surface::new(c, window.clone()).ok());
-            if let (Some(c), Some(mut surf)) = (ctx, surf) {
-                let _ = surf.resize(size.width.max(1).try_into().unwrap(), size.height.max(1).try_into().unwrap());
-                app.size = (size.width.max(1), size.height.max(1));
-                app.sbuf = Some((c, surf));
-            }
+            let (sw, sh) = (size.width.max(1), size.height.max(1));
+            let build = |alpha: Option<pixels::wgpu::CompositeAlphaMode>| {
+                let st = pixels::SurfaceTexture::new(sw, sh, window.clone());
+                let mut b = pixels::PixelsBuilder::new(sw, sh, st)
+                    .clear_color(pixels::wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 0.0 });
+                if let Some(a) = alpha {
+                    b = b.alpha_mode(a);
+                }
+                b.build()
+            };
+            // Premultiplied gives true per-pixel transparency on Wayland/X11/Windows;
+            // fall back to the compositor default if the surface refuses it.
+            let px = match build(Some(pixels::wgpu::CompositeAlphaMode::PreMultiplied)) {
+                Ok(px) => px,
+                Err(e1) => match build(None) {
+                    Ok(px) => px,
+                    Err(e2) => {
+                        eprintln!("renderer: {e1} / {e2}");
+                        el.exit();
+                        return;
+                    }
+                },
+            };
+            app.size = (sw, sh);
+            app.pixels = Some(px);
             app.window = Some(window);
             if !app.startup_done {
                 app.startup_done = true;
@@ -373,18 +436,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Event::WindowEvent { event, .. } => match event {
             WindowEvent::Resized(size) => {
-                if let Some((_c, s)) = &mut app.sbuf {
-                    let _ = s.resize(size.width.max(1).try_into().unwrap(), size.height.max(1).try_into().unwrap());
+                let (nw, nh) = (size.width.max(1), size.height.max(1));
+                if let Some(px) = &mut app.pixels {
+                    let _ = px.resize_surface(nw, nh);
+                    let _ = px.resize_buffer(nw, nh);
                 }
-                app.size = (size.width.max(1), size.height.max(1));
+                app.size = (nw, nh);
             }
             WindowEvent::ScaleFactorChanged { .. } => {
                 if let Some(window) = &app.window {
                     let size = window.inner_size();
-                    if let Some((_c, s)) = &mut app.sbuf {
-                        let _ = s.resize(size.width.max(1).try_into().unwrap(), size.height.max(1).try_into().unwrap());
+                    let (nw, nh) = (size.width.max(1), size.height.max(1));
+                    if let Some(px) = &mut app.pixels {
+                        let _ = px.resize_surface(nw, nh);
+                        let _ = px.resize_buffer(nw, nh);
                     }
-                    app.size = (size.width.max(1), size.height.max(1));
+                    app.size = (nw, nh);
                 }
             }
             WindowEvent::MouseWheel { delta, .. } => {
@@ -405,15 +472,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             WindowEvent::CursorMoved { position, .. } => {
                 app.mouse = (position.x, position.y);
-                if let (Some(((pmx, pmy), (wpx, wpy))), Some(window)) = (&app.press, &app.window) {
+                let App { press, dragging, window, .. } = &mut app;
+                if let (Some(((pmx, pmy), (wpx, wpy))), Some(window)) = (*press, &mut *window) {
                     let dx = position.x - pmx;
                     let dy = position.y - pmy;
                     if dx.abs() + dy.abs() > 6.0 {
-                        app.dragging = true;
-                        window.set_outer_position(Position::Physical(PhysicalPosition::new(
-                            (*wpx as f64 + dx) as i32,
-                            (*wpy as f64 + dy) as i32,
-                        )));
+                        *dragging = true;
+                        // Wayland cannot move a window from the client: hand the drag
+                        // to the compositor (also used on X11/macOS/Windows when
+                        // supported); fall back to manual positioning otherwise.
+                        if window.drag_window().is_err() {
+                            window.set_outer_position(Position::Physical(PhysicalPosition::new(
+                                (wpx as f64 + dx) as i32,
+                                (wpy as f64 + dy) as i32,
+                            )));
+                        } else {
+                            *press = None;
+                        }
                     }
                 }
             }

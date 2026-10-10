@@ -67,22 +67,6 @@ impl Canvas {
             }
         }
     }
-    /// Convert to softbuffer u32 pixels (0xAARRGGBB). Premultiplied on macOS
-    /// where CoreGraphics expects premultipliedFirst.
-    pub fn to_u32(&self) -> Vec<u32> {
-        let premul = cfg!(target_os = "macos");
-        let mut out = Vec::with_capacity((self.w * self.h) as usize);
-        for chunk in self.px.chunks_exact(4) {
-            let (r, g, b, a) = (chunk[0] as u32, chunk[1] as u32, chunk[2] as u32, chunk[3] as u32);
-            let (r, g, b) = if premul && a < 255 {
-                (r * a / 255, g * a / 255, b * a / 255)
-            } else {
-                (r, g, b)
-            };
-            out.push((a << 24) | (r << 16) | (g << 8) | b);
-        }
-        out
-    }
 }
 
 /// Word-wrap `text` into lines fitting `max_w` pixels.

@@ -49,12 +49,40 @@ string in the tree is the crate `scoped-tls` (thread-local storage, not TLS).
 - Speech bubbles with the original joke/fact/song corpus; optional local TTS
   (`--tts`: `say` on macOS, PowerShell System.Speech on Windows, espeak-ng on Linux).
 - Click to pet, right-click menu (joke / fact / song / trick / dance / walk / hide / about / quit).
-- Draggable always-on-top borderless window; walks along the bottom of the work area and turns at screen edges.
+- Draggable borderless window; walks along the bottom of the work area and turns at screen edges.
 - Original WAV sound effects (`CHORD.WAV`, `Snd1/2.wav`, `Intro2.wav`).
 - Scroll-wheel over the buddy resizes it (0.5×–4×), persisted across restarts
   (`$XDG_CONFIG_HOME/bonzibuddy-rs.json`); `--scale N` sets it at launch and HiDPI
   scale factors are honored automatically.
 - Zero network code, zero registry writes, zero install steps.
+
+## Transparency & window behavior
+
+Frames are presented through `pixels`/wgpu on a 32-bit ARGB surface with
+premultiplied alpha (verified: transparent pixels carry A=0 in the live window
+buffer). A compositor is required for the see-through effect; without one use
+`--matte`.
+
+| Platform | Transparency | Always-on-top | Drag |
+|---|---|---|---|
+| Windows | ✓ | ✓ | ✓ |
+| macOS | ✓ | ✓ | ✓ |
+| X11 (+compositor: KWin/compton/picom) | ✓ | ✓ | ✓ |
+| Wayland (KWin, GNOME, …) | ✓ (native ARGB surface) | ✗ — no protocol; see below | ✓ (compositor-driven) |
+
+Wayland has no always-on-top protocol by design. On KDE: System Settings →
+Window Management → Window Rules → add a rule matching window class
+`bonzibuddy-rs` → set **Keep Above**. GNOME users can use the "Always on Top"
+extension similarly.
+
+## Audio
+
+Sound effects play through cpal with the **JACK backend enabled** in addition
+to ALSA: if you run jackd (or PipeWire's jack bridge) Bonzi connects to it
+directly. If the default device is busy or misconfigured, every enumerated
+device is tried before falling back to silence. ALSA/JACK print
+connection-probe failures to stderr even when another backend works, so the
+probe phase runs with stderr silenced on Unix.
 
 ## Building & running
 
@@ -82,7 +110,9 @@ cargo check --target aarch64-apple-darwin --no-default-features
 `coreaudio-sys` (via rodio→cpal) needs the macOS SDK at build time, so full
 audio builds for macOS must happen on macOS. The `audio` feature (default on)
 can be disabled (`--no-default-features`) for headless or SDK-less builds.
-Linux transparency needs a compositor; without one use `--matte`.
+Linux transparency needs a compositor; without one use `--matte`. wgpu uses
+Vulkan/Metal/D3D12 with an OpenGL (`gles`) fallback for ancient or
+virtualized drivers.
 
 ## Tests
 
