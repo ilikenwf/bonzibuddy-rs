@@ -44,8 +44,13 @@ string in the tree is the crate `scoped-tls` (thread-local storage, not TLS).
 
 ## Features
 
-- Original Bonzi sprite animations (idle, blink, walk, dance, hide, think…),
-  driven by the original per-frame timings and return-animation graph.
+- Original Bonzi sprite animations (idle, blink, walk, dance, hide, think,
+  read, write, search, sunglasses…), driven by the original per-frame
+  timings and return-animation graph — all 146 animations from the `.acs`.
+- **Original voice clips**: the `.acs` stores Bonzi's actual voice samples
+  (`bonzi/audio/audio_000..021.wav`) on specific animation frames — he now
+  talks in the original voice mid-HUG, mid-GIGGLE, while idling, walking,
+  hiding, exactly where the 1999 character did.
 - Speech bubbles with the original joke/fact/song corpus, cleaned of the
   VocalTec markup (the parser treats `\` as a field delimiter — the original
   data has odd backslash counts, so pair-based parsing leaks `spd=`/`pit=`
@@ -53,8 +58,9 @@ string in the tree is the crate `scoped-tls` (thread-local storage, not TLS).
   System.Speech on Windows, espeak-ng on Linux).
 - `[username]` placeholders in the original scripts are replaced with your
   name: `--name NAME` (or `BONZI_NAME`), else the login account name.
-- Click to pet, right-click menu (joke / fact / song / trick / dance / walk /
-  ask / settings / hide / about / quit).
+- Click to pet, right-click menu (joke / fact / **what time is it?** / song
+  / trick / dance / walk / ask / settings / hide / about / quit). The clock
+  trick reads the local clock — no network.
 - **Ask Bonzi…** — optional chat with any OpenAI-compatible endpoint
   (`/chat/completions`). Off unless you configure it in **Settings…** (the
   in-app dialog: endpoint / API key / model, Tab to switch fields, Enter to
@@ -81,9 +87,15 @@ string in the tree is the crate `scoped-tls` (thread-local storage, not TLS).
 - **Ask Bonzi…** (in-pet dialog) grabs X11 input focus itself
   (`XSetInputFocus`) while open and hands it back on Enter/Esc; it supports
   caret editing (arrows, Home/End, Delete, mid-string insert).
-- Original WAV sound effects (`CHORD.WAV`, `Snd1/2.wav`, `Intro2.wav`).
-  One sound at a time: every new action (sound, speech, agent reply) cuts
-  off whatever was playing or being spoken before it.
+- Original WAV sound effects (`CHORD.WAV`, `Snd1/2.wav`, `Intro2.wav`) plus
+  the 22 original voice samples. One voice at a time: every new action cuts
+  off whatever was playing or being spoken before it. **Dance!** loops the
+  original intro jingle as dance music (the 1999 "dance to MIDI" was a
+  paid Bonzi Unlimited feature — here it's free and offline) over the
+  12-second headphone dance loop, then `HEADPHONESRETURN`.
+- `--test-audio` plays every bundled sound once, in sequence, and reports
+  which output path (cpal device or `paplay`/`aplay`/`afplay`/`ffplay`)
+  handled each one — the quickest way to confirm sound works on a new box.
 - Scroll-wheel over the buddy resizes it (0.5×–4×); zoom **and window
   position** persist across restarts (`$XDG_CONFIG_HOME/bonzibuddy-rs.json`);
   `--scale N` sets it at launch and HiDPI scale factors are honored automatically.

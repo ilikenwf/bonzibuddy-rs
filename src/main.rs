@@ -277,6 +277,83 @@ fn open_audio() -> Option<(rodio::OutputStream, rodio::OutputStreamHandle)> {
     }
     None
 }
+/// `--test-audio`: play every bundled sound once, in sequence, so the
+/// audio path can be verified end to end on the user's machine.
+fn test_audio() -> Result<(), Box<dyn std::error::Error>> {
+    let mut assets = assets::Assets::load()?;
+    let files = [
+        "CHORD.WAV",
+        "Snd1.wav",
+        "Snd2.wav",
+        "Intro2.wav",
+        "audio_000.wav",
+        "audio_007.wav",
+        "audio_008.wav",
+    ];
+    let find = |a: &assets::Assets, f: &str| -> Option<std::path::PathBuf> {
+        ["audio", "sfx", "bonzi/audio"]
+            .iter()
+            .map(|sub| a.root().join(sub).join(f))
+            .find(|p| p.is_file())
+    };
+    #[cfg(feature = "audio")]
+    {
+        match open_audio() {
+            Some((_s, handle)) => {
+                println!("cpal device open: playing each sound once — you should hear them all.");
+                for f in files {
+                    let Some(bytes) = assets.sound(f) else {
+                        println!("  {f}: NOT FOUND in assets");
+                        continue;
+                    };
+                    match rodio::Decoder::new(std::io::Cursor::new(bytes.to_vec())) {
+                        Ok(src) => {
+                            let sink = rodio::Sink::try_new(&handle)?;
+                            println!("  {f}: playing ({} bytes)…", bytes.len());
+                            sink.append(src);
+                            let t0 = std::time::Instant::now();
+                            while !sink.empty() && t0.elapsed().as_secs() < 20 {
+                                std::thread::sleep(std::time::Duration::from_millis(50));
+                            }
+                        }
+                        Err(e) => println!("  {f}: DECODE FAILED: {e}"),
+                    }
+                }
+                return Ok(());
+            }
+            None => println!("cpal found no openable device; trying command-line players"),
+        }
+    }
+    for f in files {
+        let Some(p) = find(&assets, f) else {
+            println!("  {f}: NOT FOUND in assets");
+            continue;
+        };
+        let ps = p.to_str().unwrap_or_default().to_string();
+        let mut played = false;
+        for (prog, args) in [
+            ("paplay", vec![ps.as_str()]),
+            ("aplay", vec!["-q", ps.as_str()]),
+            ("afplay", vec![ps.as_str()]),
+            ("ffplay", vec!["-nodisp", "-autoexit", "-loglevel", "quiet", ps.as_str()]),
+        ] {
+            if let Ok(mut c) = std::process::Command::new(prog)
+                .args(&args)
+                .stdin(std::process::Stdio::null())
+                .spawn()
+            {
+                println!("  {f}: played via {prog}");
+                let _ = c.wait();
+                played = true;
+                break;
+            }
+        }
+        if !played {
+            return Err(format!("no audio output path for {f} (no cpal device, no player)").into());
+        }
+    }
+    Ok(())
+}
 const ABOUT: &str = "BonziBuddy-rs v1.0\nA safe reimagining of the 1999 original.\nNo phone-home. No ads. No spyware.\n100% offline. Original character art.\nRight-click me for the menu!";
 
 mod settings_ui;
@@ -309,6 +386,7 @@ struct MenuItem {
 const MENU: &[MenuItem] = &[
     MenuItem { label: "Tell me a joke", action: |p, c| p.tell_joke(c) },
     MenuItem { label: "Fun fact", action: |p, c| p.tell_fact(c) },
+    MenuItem { label: "What time is it?", action: |p, _c| p.tell_time() },
     MenuItem { label: "Sing a song", action: |p, c| p.sing(c) },
     MenuItem { label: "Do a trick", action: |p, _c| p.trick() },
     MenuItem { label: "Dance!", action: |p, _c| p.dance() },
@@ -346,6 +424,8 @@ struct App {
     audio: Option<(rodio::OutputStream, rodio::OutputStreamHandle)>,
     #[cfg(feature = "audio")]
     sink: Option<rodio::Sink>,
+    #[cfg(feature = "audio")]
+    music: Option<rodio::Sink>,
     /// Last spawned fallback player / TTS child; killed when new audio
     /// starts so outputs never overlap.
     child: Option<std::process::Child>,
@@ -384,10 +464,9 @@ impl App {
         None
     }
 
-    /// Kill whatever audio is currently playing (rodio sink and/or a
-    /// spawned player/TTS child). Called before every new output: one
-    /// sound at a time, newer actions interrupt older ones.
-    fn stop_audio(&mut self) {
+    /// Kill voice output only (voice sink + spawned player/TTS child).
+    /// Voice clips interrupt each other; music is a separate channel.
+    fn stop_voice(&mut self) {
         #[cfg(feature = "audio")]
         if let Some(s) = self.sink.take() {
             s.stop();
@@ -397,6 +476,47 @@ impl App {
             let _ = c.wait();
         }
     }
+
+    /// Kill everything: voice, music, children. A new action starts clean.
+    fn stop_audio(&mut self) {
+        self.stop_music();
+        self.stop_voice();
+    }
+
+    fn stop_music(&mut self) {
+        #[cfg(feature = "audio")]
+        if let Some(s) = self.music.take() {
+            s.stop();
+        }
+    }
+
+    /// Background music for the dance: the same sink pattern as voice but
+    /// the wav is queued several times so a short jingle covers the loop,
+    /// and voice clips can play over it.
+    #[cfg(feature = "audio")]
+    fn play_music(&mut self, name: &str) {
+        if !self.opts.audio {
+            return;
+        }
+        self.stop_music();
+        let Some((_s, handle)) = &self.audio else { return };
+        let Some(bytes) = self.assets.sound(name) else { return };
+        if let Ok(sink) = rodio::Sink::try_new(handle) {
+            let mut queued = 0;
+            for _ in 0..4 {
+                if let Ok(src) = rodio::Decoder::new(std::io::Cursor::new(bytes.to_vec())) {
+                    sink.append(src);
+                    queued += 1;
+                }
+            }
+            if queued > 0 {
+                sink.set_volume(0.55);
+                self.music = Some(sink);
+            }
+        }
+    }
+    #[cfg(not(feature = "audio"))]
+    fn play_music(&mut self, _name: &str) {}
 
     /// Last-resort playback when cpal finds no openable device (common when
     /// the session has no Pulse/PipeWire socket): shell out to whatever the
@@ -431,7 +551,7 @@ impl App {
         if !self.opts.audio {
             return;
         }
-        self.stop_audio();
+        self.stop_voice();
         match &self.audio {
             Some((_s, handle)) => {
                 let Some(bytes) = self.assets.sound(name) else { return };
@@ -459,23 +579,22 @@ impl App {
 
     #[cfg(not(feature = "audio"))]
     fn play_sound(&mut self, name: &str) {
-        self.stop_audio();
+        self.stop_voice();
         if let Some(p) = self.sound_path(name) {
             self.play_sound_subprocess(&p);
         }
     }
 
     fn dispatch_effects(&mut self, effects: Vec<Effect>, el: &ActiveEventLoop) {
-        // Any batch of effects is a new "action": whatever was speaking or
-        // playing before gets cut off first.
-        if !effects.is_empty() {
-            self.stop_audio();
-        }
         for e in effects {
             match e {
+                Effect::StopAll => self.stop_audio(),
                 Effect::PlaySound(name) => self.play_sound(&name),
+                Effect::PlayMusic(name) => self.play_music(&name),
+                Effect::StopMusic => self.stop_music(),
                 Effect::SpeakTts(t) => {
                     if self.opts.tts {
+                        self.stop_voice();
                         self.child = tts::speak(&t);
                     }
                 }
@@ -488,6 +607,7 @@ impl App {
                         Some(Instant::now() + Duration::from_secs_f64(secs));
                     self.pet.speaking = true;
                     if self.opts.tts {
+                        self.stop_voice();
                         self.child = tts::speak(&t);
                     }
                 }
@@ -820,6 +940,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let saved_pos = (cfg.x, cfg.y);
     let mut opts = Opts { scale: cfg.scale, matte: std::env::var("BONZI_MATTE").is_ok(), audio: true, tts: false };
     let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--test-audio") {
+        return test_audio();
+    }
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
@@ -877,6 +1000,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         audio,
         #[cfg(feature = "audio")]
         sink: None,
+        #[cfg(feature = "audio")]
+        music: None,
         child: None,
         mouse: (0.0, 0.0),
         press: None,
@@ -1113,7 +1238,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let effects = {
                         let App { pet, assets, content, window, size, opts, .. } = &mut app;
                         let prev_walk = pet.walk_dir;
-                        let (dx, effects) = pet.tick(|a| assets.has(a), content);
+                        let (dx, effects) =
+                            pet.tick(|a| assets.has(a), |a, f| assets.frame_audio(a, f), content);
                         if dx == 0 && prev_walk != 0 {
                             // walk just finished: remember where we ended up
                             save_state(window.as_deref(), opts.scale);

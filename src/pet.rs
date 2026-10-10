@@ -21,8 +21,11 @@ pub enum Action {
     Speak(String),
     /// Combined: gesture + talk.
     Tell(String, String),
-    /// Play a wav from assets (sfx/ or bonzi/audio/).
+    /// Play a wav from assets (audio/, sfx/ or bonzi/audio/).
     Sound(String),
+    /// Loop background music (repeats the wav) until StopMusic or the
+    /// next action replaces it.
+    Music(String),
     /// Walk: -1 left, +1 right, 0 stop.
     Walk(i8),
     Hide,
@@ -31,7 +34,14 @@ pub enum Action {
 
 #[derive(Clone, Debug)]
 pub enum Effect {
+    /// Voice/sfx: interrupts any previous voice or TTS, never the music.
     PlaySound(String),
+    /// Background music: replaces previous music, survives voice clips.
+    PlayMusic(String),
+    StopMusic,
+    /// A new user/idle action begins: silence everything (voice, music,
+    /// TTS child) before its own sounds start.
+    StopAll,
     SpeakTts(String),
     /// Ask Bonzi reply: shown verbatim (no 14 s bubble cap) and voiced.
     AgentReply(String),
@@ -48,6 +58,7 @@ const IDLE_POOL: &[&str] = &[
 const FUN_POOL: &[&str] = &[
     "BANANA", "JUGGLE", "BUTTERNUT", "GIGGLE", "DOMAGIC1", "DOMAGIC2", "WINK", "BLOWKISS",
     "HUG", "SURPRISED", "UNBELIEVABLE", "CONFUSED", "SAD", "WAVE", "CONGRATULATE", "SHOOSH",
+    "READ", "WRITE", "SEARCH", "SUNGLASSESCONTINUED",
 ];
 const PETTED_POOL: &[&str] = &["PLEASED", "PLEASEDSOFT", "PLEASEDHARD", "GIGGLE", "WINK", "HUG"];
 const TALK_POOL: &[&str] = &["EXPLAIN", "EXPLAIN2", "EXPLAIN3", "EXPLAIN4", "GREET", "SUGGEST"];
@@ -77,6 +88,11 @@ pub struct Pet {
     hidden: bool,
     queue: VecDeque<(Action, Instant)>,
     pub pending: Vec<Effect>,
+    /// Last (anim, frame) shown, so frame-carried voice clips fire exactly
+    /// once per frame entry — this is how the original .acs audio refs work.
+    seen: (String, usize),
+    /// True while a Music action's background loop is running.
+    pub music_on: bool,
 }
 
 fn pick<'a>(pool: &'a [&'a str], fallback: &'a str) -> &'a str {
@@ -109,6 +125,8 @@ impl Pet {
             hide_until: None,
             queue: VecDeque::new(),
             pending: Vec::new(),
+            seen: ("IDLE1_1".into(), 0),
+            music_on: false,
         }
     }
 
@@ -194,7 +212,24 @@ impl Pet {
     }
 
     pub fn dance(&mut self) {
-        self.push(Action::AnimateLoop("HEADPHONESCONTINUED".into(), 9_000));
+        // The original dance: headphones on, jingle looping, then the
+        // HEADPHONESRETURN tail (12 s ≈ 3 loops of the 3.5 s intro jingle).
+        self.push(Action::AnimateLoop("HEADPHONESCONTINUED".into(), 12_000));
+        self.push(Action::Music("Intro2.wav".into()));
+        self.push(Action::Speak("I just love to dance!".into()));
+    }
+
+    /// The original "What's the time?" — local clock, no network.
+    pub fn tell_time(&mut self) {
+        let (h, m) = local_hm();
+        let ampm = if h >= 12 { "PM" } else { "AM" };
+        let h12 = match h % 12 {
+            0 => 12,
+            x => x,
+        };
+        let t = format!("It's {}:{:02} {}!", h12, m, ampm);
+        self.push(Action::Sound("Snd2.wav".into()));
+        self.push(Action::Tell(pick(TALK_POOL, "EXPLAIN").to_string(), t));
     }
 
     pub fn start_walk(&mut self) {
@@ -219,8 +254,14 @@ impl Pet {
     }
 
     /// Advance animation/bubble/personality clocks.
+    /// `audio_of(anim, frame)` maps a frame to its original voice clip.
     /// Returns (window_dx_from_walk, effects).
-    pub fn tick(&mut self, has_anim: impl Fn(&str) -> bool, content: &Content) -> (i32, Vec<Effect>) {
+    pub fn tick(
+        &mut self,
+        has_anim: impl Fn(&str) -> bool,
+        audio_of: impl Fn(&str, usize) -> Option<String>,
+        content: &Content,
+    ) -> (i32, Vec<Effect>) {
         let now = Instant::now();
         let dt = now.duration_since(self.last_tick).as_secs_f64().clamp(0.0, 0.25);
         self.last_tick = now;
@@ -228,6 +269,8 @@ impl Pet {
 
         // drain queue (one action per tick keeps pacing natural)
         if let Some((action, _)) = self.queue.pop_front() {
+            // A new action always cuts off whatever was playing before.
+            self.pending.push(Effect::StopAll);
             match action {
                 Action::Animate(a) if has_anim(&a) => { self.walk_dir = 0; self.set_anim(&a, false); }
                 Action::AnimateLoop(a, ms) if has_anim(&a) => {
@@ -245,6 +288,10 @@ impl Pet {
                     self.bubble_now(t, d);
                 }
                 Action::Sound(s) => self.pending.push(Effect::PlaySound(s)),
+                Action::Music(name) => {
+                    self.music_on = true;
+                    self.pending.push(Effect::PlayMusic(name));
+                }
                 Action::Walk(d) => {
                     self.walk_dir = d.clamp(-1, 1);
                     if self.walk_dir != 0 {
@@ -321,12 +368,14 @@ impl Pet {
             if now.duration_since(self.frame_at) > 4 * self.frame_dur {
                 self.frame_at = now;
             }
-            // duration set by caller via frame_dur hook; default handled in main
-            let n = self.frame;
             if let Some(until) = self.loop_until {
                 if now >= until {
                     self.loop_until = None;
                     self.looping = false;
+                    if self.music_on {
+                        self.music_on = false;
+                        self.pending.push(Effect::StopMusic);
+                    }
                     let ret = return_of(&self.anim);
                     self.frame = 0;
                     if !ret.is_empty() && has_anim(&ret) {
@@ -336,7 +385,16 @@ impl Pet {
                     }
                 }
             }
-            let _ = n;
+        }
+
+        // Frame-carried voice clips: the original .acs stores a sound index
+        // on specific frames (Bonzi says "Oh!" mid-HUG, whistles in idles…).
+        // Fire once per (anim, frame) entry.
+        if (self.anim.as_str(), self.frame) != (self.seen.0.as_str(), self.seen.1) {
+            self.seen = (self.anim.clone(), self.frame);
+            if let Some(w) = audio_of(&self.anim, self.frame) {
+                self.pending.push(Effect::PlaySound(w));
+            }
         }
 
         // idle personality engine
@@ -384,14 +442,44 @@ impl Pet {
 
 fn return_of(anim: &str) -> String {
     // ACS return animations are stored in animations.json; this is the
-    // fallback naming convention from the original character.
-    for suffix in ["CONTINUED", "LEFT", "RIGHT", "UP", "DOWN"] {
+    // fallback naming convention from the original character. The
+    // CONTINUED family returns to {base}RETURN (HEADPHONESCONTINUED →
+    // HEADPHONESRETURN), not {base}CONTINUEDRETURN.
+    if let Some(base) = anim.strip_suffix("CONTINUED") {
+        return format!("{base}RETURN");
+    }
+    for suffix in ["LEFT", "RIGHT", "UP", "DOWN"] {
         if let Some(base) = anim.strip_suffix(suffix) {
             let cand = format!("{base}{suffix}RETURN");
             return cand;
         }
     }
     String::new()
+}
+
+fn local_hm() -> (u32, u32) {
+    #[cfg(unix)]
+    unsafe {
+        let t = libc::time(std::ptr::null_mut());
+        let mut tm: libc::tm = std::mem::zeroed();
+        libc::localtime_r(&t, &mut tm);
+        (tm.tm_hour as u32, tm.tm_min as u32)
+    }
+    #[cfg(windows)]
+    unsafe {
+        let t = libc::time(std::ptr::null_mut());
+        let mut tm: libc::tm = std::mem::zeroed();
+        libc::localtime_s(&mut tm, &t);
+        (tm.tm_hour as u32, tm.tm_min as u32)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        ((secs / 3600 % 24) as u32, (secs / 60 % 60) as u32)
+    }
 }
 
 
@@ -415,7 +503,7 @@ mod tests {
         // drain the queue like the main loop does; tick() returns the effects
         let mut seen = Vec::new();
         while !p.queue.is_empty() {
-            let (_, effects) = p.tick(|_| true, &c);
+            let (_, effects) = p.tick(|_| true, |_, _| None, &c);
             seen.extend(effects.into_iter().filter(|e| matches!(e, Effect::SpeakTts(_))));
         }
         assert_eq!(seen.len(), 1, "joke must voice exactly once");
@@ -423,5 +511,43 @@ mod tests {
             Effect::SpeakTts(t) => assert!(!t.is_empty() && !t.contains("spd="), "bad tts text: {t:?}"),
             _ => unreachable!(),
         }
+    }
+
+    #[test]
+    fn frame_voice_clips_fire_once_per_frame_entry() {
+        let c = content();
+        let mut p = Pet::new();
+        p.pending.clear();
+        p.frame_dur = Duration::ZERO; // advance one frame per tick
+        p.push(Action::Animate("HUG".into()));
+        let audio = |a: &str, f: usize| -> Option<String> {
+            if a == "HUG" && f == 5 {
+                Some("audio_008.wav".into())
+            } else {
+                None
+            }
+        };
+        let mut fired: Vec<String> = Vec::new();
+        let mut stop_all = 0;
+        for _ in 0..10 {
+            let (_, e) = p.tick(|_| true, audio, &c);
+            for eff in e {
+                match eff {
+                    Effect::PlaySound(s) => fired.push(s),
+                    Effect::StopAll => stop_all += 1,
+                    _ => {}
+                }
+            }
+        }
+        assert_eq!(fired, vec!["audio_008.wav".to_string()], "clip fires exactly once");
+        assert_eq!(stop_all, 1, "queued action cuts previous output once");
+    }
+
+    #[test]
+    fn continued_loops_return_to_base_return() {
+        assert_eq!(return_of("HEADPHONESCONTINUED"), "HEADPHONESRETURN");
+        assert_eq!(return_of("READCONTINUED"), "READRETURN");
+        assert_eq!(return_of("MOVELEFT"), "MOVELEFTRETURN");
+        assert_eq!(return_of("IDLE1_1"), "");
     }
 }

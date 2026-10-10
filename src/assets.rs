@@ -31,6 +31,8 @@ pub struct FrameDef {
     pub file: String,
     pub duration_ms: u64,
     pub mouth: Vec<(u8, String)>,
+    /// Original voice clip index (audio_NNN.wav); u16::MAX = silent.
+    pub audio: u16,
 }
 
 pub struct Frame {
@@ -72,6 +74,7 @@ impl Assets {
                             file: f["file"].as_str().unwrap_or("").to_string(),
                             duration_ms: (f["duration_10ms"].as_u64().unwrap_or(10).max(4)) * 10,
                             mouth,
+                            audio: f["audio"].as_u64().unwrap_or(65535) as u16,
                         });
                     }
                 }
@@ -142,6 +145,17 @@ impl Assets {
 
     pub fn frame_duration(&self, anim: &str, idx: usize) -> u64 {
         self.anims.get(anim).and_then(|a| a.frames.get(idx)).map(|f| f.duration_ms).unwrap_or(100)
+    }
+
+    /// The original voice clip (`audio_NNN.wav`) the character plays when
+    /// this frame is shown, if the frame carries one.
+    pub fn frame_audio(&self, anim: &str, idx: usize) -> Option<String> {
+        let f = self.anims.get(anim)?.frames.get(idx)?;
+        if f.audio == u16::MAX {
+            None
+        } else {
+            Some(format!("audio_{:03}.wav", f.audio))
+        }
     }
 
     pub fn return_anim(&self, anim: &str) -> Option<&str> {
