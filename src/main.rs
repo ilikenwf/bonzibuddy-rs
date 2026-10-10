@@ -345,7 +345,10 @@ struct App {
     #[cfg(feature = "audio")]
     audio: Option<(rodio::OutputStream, rodio::OutputStreamHandle)>,
     #[cfg(feature = "audio")]
-    sinks: Vec<rodio::Sink>,
+    sink: Option<rodio::Sink>,
+    /// Last spawned fallback player / TTS child; killed when new audio
+    /// starts so outputs never overlap.
+    child: Option<std::process::Child>,
     mouse: (f64, f64),
     press: Option<((f64, f64), (i32, i32))>,
     dragging: bool,
@@ -381,11 +384,25 @@ impl App {
         None
     }
 
+    /// Kill whatever audio is currently playing (rodio sink and/or a
+    /// spawned player/TTS child). Called before every new output: one
+    /// sound at a time, newer actions interrupt older ones.
+    fn stop_audio(&mut self) {
+        #[cfg(feature = "audio")]
+        if let Some(s) = self.sink.take() {
+            s.stop();
+        }
+        if let Some(mut c) = self.child.take() {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+    }
+
     /// Last-resort playback when cpal finds no openable device (common when
     /// the session has no Pulse/PipeWire socket): shell out to whatever the
     /// distro provides, same spirit as the TTS fallback.
     #[cfg(unix)]
-    fn play_sound_subprocess(&self, path: &std::path::Path) {
+    fn play_sound_subprocess(&mut self, path: &std::path::Path) {
         let p = path.to_str().unwrap_or_default();
         let cands: [(&str, Vec<&str>); 4] = [
             ("paplay", vec![p]),
@@ -394,34 +411,41 @@ impl App {
             ("ffplay", vec!["-nodisp", "-autoexit", "-loglevel", "quiet", p]),
         ];
         for (prog, args) in cands {
-            if std::process::Command::new(prog)
+            if let Ok(c) = std::process::Command::new(prog)
                 .args(&args)
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .spawn()
-                .is_ok()
             {
+                self.child = Some(c);
                 return;
             }
         }
     }
     #[cfg(not(unix))]
-    fn play_sound_subprocess(&self, _path: &std::path::Path) {}
+    fn play_sound_subprocess(&mut self, _path: &std::path::Path) {}
 
     #[cfg(feature = "audio")]
     fn play_sound(&mut self, name: &str) {
         if !self.opts.audio {
             return;
         }
+        self.stop_audio();
         match &self.audio {
             Some((_s, handle)) => {
                 let Some(bytes) = self.assets.sound(name) else { return };
                 if let Ok(sink) = rodio::Sink::try_new(handle) {
-                    if let Ok(src) = rodio::Decoder::new(std::io::Cursor::new(bytes.to_vec())) {
-                        sink.append(src);
-                        self.sinks.retain(|s| !s.empty());
-                        self.sinks.push(sink);
+                    match rodio::Decoder::new(std::io::Cursor::new(bytes.to_vec())) {
+                        Ok(src) => {
+                            sink.append(src);
+                            self.sink = Some(sink);
+                        }
+                        Err(e) => {
+                            if std::env::var("BONZI_AUDIO_DEBUG").is_ok() {
+                                eprintln!("[audio] decode {name} failed: {e}");
+                            }
+                        }
                     }
                 }
             }
@@ -435,18 +459,24 @@ impl App {
 
     #[cfg(not(feature = "audio"))]
     fn play_sound(&mut self, name: &str) {
+        self.stop_audio();
         if let Some(p) = self.sound_path(name) {
             self.play_sound_subprocess(&p);
         }
     }
 
     fn dispatch_effects(&mut self, effects: Vec<Effect>, el: &ActiveEventLoop) {
+        // Any batch of effects is a new "action": whatever was speaking or
+        // playing before gets cut off first.
+        if !effects.is_empty() {
+            self.stop_audio();
+        }
         for e in effects {
             match e {
                 Effect::PlaySound(name) => self.play_sound(&name),
                 Effect::SpeakTts(t) => {
                     if self.opts.tts {
-                        tts::speak(&t);
+                        self.child = tts::speak(&t);
                     }
                 }
                 Effect::AgentReply(t) => {
@@ -458,7 +488,7 @@ impl App {
                         Some(Instant::now() + Duration::from_secs_f64(secs));
                     self.pet.speaking = true;
                     if self.opts.tts {
-                        tts::speak(&t);
+                        self.child = tts::speak(&t);
                     }
                 }
                 Effect::Quit => {
@@ -573,18 +603,6 @@ impl App {
         }
         self.dialog = Dialog::Ask { input: String::new(), caret: 0 };
         self.grab_keyboard();
-    }
-
-    /// True when the pointer is over the buddy sprite or an open menu —
-    /// the only regions that swallow clicks; elsewhere a drag moves the window.
-    fn over_pet(&self, x: f64, y: f64) -> bool {
-        let (sx, sy, sw, sh) = self.sprite_rect;
-        if x >= sx as f64 && x < (sx + sw) as f64 && y >= sy as f64 && y < (sy + sh) as f64 {
-            return true;
-        }
-        self.menu_rects.iter().any(|(_, (mx, my, mw, mh))| {
-            x >= *mx as f64 && x < (mx + mw) as f64 && y >= *my as f64 && y < (my + mh) as f64
-        })
     }
 
     /// Route a key press to the open Ask dialog; returns true when consumed.
@@ -780,7 +798,11 @@ use render::Canvas;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Child mode: the forked Settings window (managed ⇒ real keyboard focus).
     if std::env::args().any(|a| a == "--settings-ui") {
-        return settings_ui::run();
+        if let Err(e) = settings_ui::run() {
+            eprintln!("settings window failed: {e}");
+            return Err(e);
+        }
+        return Ok(());
     }
     // A desktop pet needs override-redirect semantics (no taskbar, always
     // above, free programmatic movement). Native Wayland offers none of that
@@ -854,7 +876,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(feature = "audio")]
         audio,
         #[cfg(feature = "audio")]
-        sinks: Vec::new(),
+        sink: None,
+        child: None,
         mouse: (0.0, 0.0),
         press: None,
         dragging: false,
@@ -1023,16 +1046,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let dx = position.x - pmx;
                     let dy = position.y - pmy;
                     if dx.abs() + dy.abs() > 6.0 {
-                        if app.over_pet(pmx, pmy) {
-                            // Drag started on the buddy: petting/menu area —
-                            // don't move the window, keep it a click candidate.
-                            app.dragging = true;
-                        } else if let Some(window) = &app.window {
-                            // Empty window area: drag the whole window. An
-                            // override-redirect window is unmanaged, so
-                            // drag_window() (a WM operation) cannot work —
-                            // move it manually instead.
-                            app.dragging = true;
+                        // Any drag moves the window — including drags that
+                        // start on the buddy himself (that's how you grab a
+                        // desktop pet). A press without motion stays a click
+                        // (pet reaction / menu) via the release handler.
+                        // drag_window() is a WM operation and cannot work on
+                        // an unmanaged override-redirect window: move manually.
+                        app.dragging = true;
+                        if let Some(window) = &app.window {
                             let (ax, ay, aw, ah) = window
                                 .primary_monitor()
                                 .map(|m| {

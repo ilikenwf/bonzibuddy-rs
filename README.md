@@ -64,23 +64,26 @@ string in the tree is the crate `scoped-tls` (thread-local storage, not TLS).
   Quit; the buddy menu's "Hide" minimizes to the tray. On Linux this needs
   `libappindicator` (e.g. `pacman -S libappindicator`); without a tray, Hide
   auto-returns after 8 s.
-- Drag him anywhere: dragging the **empty window area** moves the window
+- Grab **the buddy himself** and drag: the window follows the pointer
   (manual `set_outer_position` — an override-redirect window is unmanaged,
-  so `drag_window()` cannot work); dragging the **buddy himself** pets him
-  instead of moving the window. He walks along the bottom of the work area
-  and turns at screen edges; walk speed is wall-clock (150 logical px/s at
-  1×, scaling with zoom and DPI) so the vine-swing feet never slide on ice
+  so `drag_window()` cannot work). A press without motion is a click and
+  pets him instead. He walks along the bottom of the work area and turns
+  at screen edges; walk speed is wall-clock (150 logical px/s at 1×,
+  scaling with zoom and DPI) so the vine-swing feet never slide on ice
   at 120 Hz or after a frame hitch.
 - **Settings…** opens a separate, normal (WM-managed) window — a forked
   child process (`--settings-ui`) with real text fields: click to place the
   caret, arrows/Home/End/Delete, Tab between fields, Enter/Save writes the
   config and the pet hot-reloads it via file mtime. The pet's own window
   can't host reliable text entry because the WM never focuses an
-  override-redirect window.
+  override-redirect window. The surface is sized to the window's physical
+  pixels, so it renders correctly under HiDPI/fractional scaling.
 - **Ask Bonzi…** (in-pet dialog) grabs X11 input focus itself
   (`XSetInputFocus`) while open and hands it back on Enter/Esc; it supports
   caret editing (arrows, Home/End, Delete, mid-string insert).
 - Original WAV sound effects (`CHORD.WAV`, `Snd1/2.wav`, `Intro2.wav`).
+  One sound at a time: every new action (sound, speech, agent reply) cuts
+  off whatever was playing or being spoken before it.
 - Scroll-wheel over the buddy resizes it (0.5×–4×); zoom **and window
   position** persist across restarts (`$XDG_CONFIG_HOME/bonzibuddy-rs.json`);
   `--scale N` sets it at launch and HiDPI scale factors are honored automatically.

@@ -152,13 +152,14 @@ impl Assets {
         &self.root
     }
 
-    /// Sound effect bytes: sfx/<name> then bonzi/audio/<name>.
+    /// Sound effect bytes: audio/<name> (extracted originals), then
+    /// sfx/<name> and bonzi/audio/<name> for user-supplied packs.
     #[cfg(feature = "audio")]
     pub fn sound(&mut self, name: &str) -> Option<Arc<Vec<u8>>> {
         if let Some(c) = self.sfx_cache.get(name) {
             return Some(c.clone());
         }
-        for sub in ["sfx", "bonzi/audio"] {
+        for sub in ["audio", "sfx", "bonzi/audio"] {
             let p = self.root.join(sub).join(name);
             if let Ok(b) = std::fs::read(&p) {
                 let arc = Arc::new(b);

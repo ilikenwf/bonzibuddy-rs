@@ -95,6 +95,18 @@ impl Ui {
         }
     }
 
+    fn build_pixels(
+        w: u32,
+        h: u32,
+        window: &Arc<Window>,
+    ) -> Option<pixels::Pixels<'static>> {
+        let st = pixels::SurfaceTexture::new(w, h, window.clone());
+        pixels::PixelsBuilder::new(w, h, st)
+            .clear_color(pixels::wgpu::Color { r: 0.96, g: 0.96, b: 0.93, a: 1.0 })
+            .build()
+            .ok()
+    }
+
     fn render(&mut self) {
         let Some(window) = &self.window else { return };
         let (w, h) = self.size;
@@ -227,28 +239,38 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                 let _ = window.set_window_icon(winit::window::Icon::from_rgba(img.into_raw(), iw, ih).ok());
             }
             let window = Arc::new(window);
-            let st = pixels::SurfaceTexture::new(W, H, window.clone());
-            match pixels::PixelsBuilder::new(W, H, st)
-                .clear_color(pixels::wgpu::Color { r: 0.96, g: 0.96, b: 0.93, a: 1.0 })
-                .build()
-            {
-                Ok(p) => {
+            // The surface MUST be sized to the window's *physical* inner
+            // size: on a scaled display (KDE fractional scaling, HiDPI)
+            // LogicalSize(460,300) maps to a larger physical buffer, and a
+            // 460x300 swapchain on a bigger surface presents as a black box.
+            let (pw, ph): (u32, u32) = {
+                let s = window.inner_size();
+                (s.width.max(1), s.height.max(1))
+            };
+            ui.size = (pw, ph);
+            match Ui::build_pixels(pw, ph, &window) {
+                Some(p) => {
                     ui.pixels = Some(p);
                     ui.window = Some(window);
                 }
-                Err(e) => {
-                    eprintln!("settings: renderer failed: {e}");
+                None => {
+                    eprintln!("settings: renderer failed");
                     el.exit();
                 }
             }
         }
         Event::WindowEvent { event, .. } => match event {
             WindowEvent::Resized(sz) => {
-                if sz.width > 0 && sz.height > 0 {
+                if sz.width > 0 && sz.height > 0 && (sz.width, sz.height) != ui.size {
                     ui.size = (sz.width, sz.height);
-                    // pixels 0.17 has no runtime resize; the window is
-                    // created non-resizable so this only fires once.
-                    let _ = &ui.pixels;
+                    if let Some(w) = ui.window.clone() {
+                        // Rare (window is non-resizable), but a scale-factor
+                        // change lands here: rebuild the swapchain at the
+                        // new physical size instead of presenting garbage.
+                        if let Some(p) = Ui::build_pixels(sz.width, sz.height, &w) {
+                            ui.pixels = Some(p);
+                        }
+                    }
                 }
             }
             WindowEvent::Focused(_) | WindowEvent::RedrawRequested => {

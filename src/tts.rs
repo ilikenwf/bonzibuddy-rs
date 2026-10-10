@@ -1,9 +1,12 @@
 //! Optional local text-to-speech. Shells out to platform voices only —
 //! never the network. Disabled unless `--tts` is passed.
+//!
+//! `speak` returns the spawned child so the caller can kill it when the
+//! next action starts (new sounds interrupt older speech).
 
-pub fn speak(text: &str) {
+pub fn speak(text: &str) -> Option<std::process::Child> {
     if text.is_empty() {
-        return;
+        return None;
     }
     #[cfg(target_os = "linux")]
     {
@@ -12,30 +15,32 @@ pub fn speak(text: &str) {
             ("spd-say", vec!["-l", "en-uk", text]),
             ("flite", vec!["-voice", "slt", text]),
         ] {
-            if std::process::Command::new(prog)
+            if let Ok(c) = std::process::Command::new(prog)
                 .args(&args)
+                .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .spawn()
-                .is_ok()
             {
-                return;
+                return Some(c);
             }
         }
     }
     #[cfg(target_os = "macos")]
     {
-        let _ = std::process::Command::new("say")
+        return std::process::Command::new("say")
             .arg(text)
+            .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
-            .spawn();
+            .spawn()
+            .ok();
     }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         let safe = text.replace('\'', "''");
-        let _ = std::process::Command::new("powershell")
+        return std::process::Command::new("powershell")
             .args([
                 "-NoProfile",
                 "-WindowStyle",
@@ -46,6 +51,9 @@ pub fn speak(text: &str) {
                 ),
             ])
             .creation_flags(0x08000000) // CREATE_NO_WINDOW
-            .spawn();
+            .spawn()
+            .ok();
     }
+    #[allow(unreachable_code)]
+    None
 }
