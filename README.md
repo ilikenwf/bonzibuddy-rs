@@ -63,9 +63,16 @@ string in the tree is the crate `scoped-tls` (thread-local storage, not TLS).
   trick reads the local clock — no network.
 - **Ask Bonzi…** — optional chat with any OpenAI-compatible endpoint
   (`/chat/completions`). Off unless you configure it in **Settings…** (the
-  in-app dialog: endpoint / API key / model, Tab to switch fields, Enter to
+  forked window: endpoint / API key / model, Tab to switch fields, Enter to
   save); replies appear in the speech bubble and via TTS. With no endpoint
   set the binary never opens a socket.
+- Chat replies own the voice: a pending gag is dropped, frame-carried sound
+  effects stay silent, and the idle engine waits until the answer has been
+  read and spoken (user menu clicks still interrupt — the user outranks the
+  model). The model can also direct his body: the persona prompt teaches it
+  to embed one `[anim:NAME]` stage direction per reply (WINK, HUG, DANCE-ish
+  SUNGLASSESCONTINUED, WALK, HIDE, …); the marker is stripped before
+  speaking and applied as a visual-only animation.
 - System tray icon: left-click toggles visibility, menu has Show / Hide and
   Quit; the buddy menu's "Hide" minimizes to the tray. On Linux this needs
   `libappindicator` (e.g. `pacman -S libappindicator`); without a tray, Hide
