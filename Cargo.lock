@@ -253,7 +253,6 @@ dependencies = [
  "libc",
  "pixels",
  "rand",
- "raw-window-handle",
  "rodio",
  "serde",
  "serde_json",
@@ -261,7 +260,6 @@ dependencies = [
  "ureq",
  "wgpu",
  "winit",
- "x11rb",
 ]
 
 [[package]]

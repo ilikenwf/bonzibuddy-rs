@@ -19,16 +19,13 @@ rand = "0.9"
 ab_glyph = "0.2"
 cpal = { version = "0.15", features = ["jack"], optional = true }
 libc = "0.2"
-raw-window-handle = "0.6"
 tray-icon = "0.19"
 # Optional agent chat (Settings dialog). Only ever contacted when the user
 # configures an endpoint; the offline pet never touches the network.
 ureq = { version = "2", default-features = false, features = ["json"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-# Only used to XSetInputFocus our override-redirect window while a dialog
-# is open (the WM will never focus an unmanaged window).
-x11rb = "0.13"
+# libappindicator tray support pumps the default GMainContext.
 gtk = "0.18"
 
 [features]

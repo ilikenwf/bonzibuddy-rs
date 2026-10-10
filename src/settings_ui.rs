@@ -36,13 +36,15 @@ struct Ui {
     save_rect: (i32, i32, i32, i32),
     status: String,
     mouse_pos: (f64, f64),
+    /// Ask mode: one question field + Ask button (writes the ask file).
+    ask: bool,
 }
 
 impl Ui {
 
     fn field_text(&self, i: usize) -> String {
         let s = &self.fields[i];
-        if i == 1 && !s.is_empty() {
+        if !self.ask && i == 1 && !s.is_empty() {
             // Never echo the key back on screen.
             format!("•••••••• ({} chars)", s.chars().count())
         } else if s.is_empty() {
@@ -72,6 +74,21 @@ impl Ui {
     }
 
     fn save(&mut self) {
+        if self.ask {
+            // Hand the question to the pet via the ask file (mtime-polled).
+            let q = self.fields[0].trim().to_string();
+            let path = crate::ask_path();
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            let _ = std::fs::write(&path, &q);
+            self.status = if q.is_empty() {
+                "Nothing asked.".into()
+            } else {
+                "Question sent to Bonzi!".into()
+            };
+            return;
+        }
         let mut cfg = crate::load_config();
         cfg.agent_endpoint = self.fields[0].trim().to_string();
         cfg.agent_key = self.fields[1].trim().to_string();
@@ -120,7 +137,7 @@ impl Ui {
         render::draw_line(
             &mut canvas,
             &self.assets.font,
-            "BonziBuddy — agent settings",
+            if self.ask { "Ask Bonzi" } else { "BonziBuddy — agent settings" },
             14.0 * s,
             y,
             PxScale { x: scale.x * 1.15, y: scale.y * 1.15 },
@@ -128,8 +145,9 @@ impl Ui {
         );
         self.rects.clear();
         y += lh * 1.4;
-        for i in 0..3 {
-            render::draw_line(&mut canvas, &self.assets.font, FIELDS[i], 14.0 * s, y, scale, [0x33, 0x33, 0x33, 255]);
+        for i in 0..if self.ask { 1 } else { 3 } {
+            let label = if self.ask { "Your question" } else { FIELDS[i] };
+            render::draw_line(&mut canvas, &self.assets.font, label, 14.0 * s, y, scale, [0x33, 0x33, 0x33, 255]);
             y += lh * 0.95;
             let (bx, by, bw, bh) = (
                 (14.0 * s) as i32,
@@ -154,7 +172,7 @@ impl Ui {
         // Save button.
         let (bx, by, bw, bh) = ((14.0 * s) as i32, y as i32, (110.0 * s) as i32, (lh * 1.7) as i32);
         canvas.round_rect(bx, by, bw, bh, 6, [0xE8, 0xE0, 0xF8, 255], [0x40, 0x00, 0x80, 255]);
-        render::draw_line(&mut canvas, &self.assets.font, "Save", bx as f32 + bw as f32 / 2.0 - 16.0 * s, by as f32 + bh as f32 * 0.68, scale, [0x40, 0x00, 0x80, 255]);
+        render::draw_line(&mut canvas, &self.assets.font, if self.ask { "Ask" } else { "Save" }, bx as f32 + bw as f32 / 2.0 - 16.0 * s, by as f32 + bh as f32 * 0.68, scale, [0x40, 0x00, 0x80, 255]);
         self.save_rect = (bx, by, bw, bh);
         render::draw_line(
             &mut canvas,
@@ -168,7 +186,7 @@ impl Ui {
         render::draw_line(
             &mut canvas,
             &self.assets.font,
-            "Click a field to edit. Enter saves. Esc closes.",
+            if self.ask { "Enter asks. Esc closes." } else { "Click a field to edit. Enter saves. Esc closes." },
             14.0 * s,
             (by + bh) as f32 + lh * 1.3,
             scale,
@@ -197,7 +215,7 @@ impl Ui {
     }
 }
 
-pub fn run() -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(ask: bool) -> Result<(), Box<dyn std::error::Error>> {
     let el = EventLoop::new()?;
     let mut ui = Ui {
         assets: match assets::Assets::load() {
@@ -213,12 +231,16 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         caret: 0,
         window: None,
         pixels: None,
-        size: (W, H),
+        size: (W, if ask { 170 } else { H }),
         rects: Vec::new(),
         save_rect: (0, 0, 0, 0),
         status: String::new(),
         mouse_pos: (0.0, 0.0),
+        ask,
     };
+    if ask {
+        ui.fields = [String::new(), String::new(), String::new()];
+    }
     ui.caret = ui.fields[0].chars().count();
 
     #[allow(deprecated)] // run_app needs an AppHandler impl; closure form is fine here
@@ -226,8 +248,8 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
         Event::NewEvents(winit::event::StartCause::Init) => {
             let Ok(window) = el.create_window(
                 WindowAttributes::default()
-                    .with_title("BonziBuddy settings")
-                    .with_inner_size(LogicalSize::new(W, H))
+                    .with_title(if ui.ask { "Ask Bonzi" } else { "BonziBuddy settings" })
+                    .with_inner_size(LogicalSize::new(W, if ui.ask { 170 } else { H }))
                     .with_resizable(false),
             ) else {
                 el.exit();
@@ -293,7 +315,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
                         el.exit();
                     }
                     Key::Named(NamedKey::Tab) => {
-                        ui.sel = (ui.sel + 1) % 3;
+                        ui.sel = (ui.sel + 1) % if ui.ask { 1 } else { 3 };
                         ui.caret = ui.fields[ui.sel].chars().count();
                     }
                     Key::Named(NamedKey::Backspace) => ui.backspace(),

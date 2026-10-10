@@ -280,6 +280,8 @@ fn open_audio() -> Option<(rodio::OutputStream, rodio::OutputStreamHandle)> {
 /// `--test-audio`: play every bundled sound once, in sequence, so the
 /// audio path can be verified end to end on the user's machine.
 fn test_audio() -> Result<(), Box<dyn std::error::Error>> {
+    // `mut` only used by the audio branch below.
+    #[cfg_attr(not(feature = "audio"), allow(unused_mut))]
     let mut assets = assets::Assets::load()?;
     let files = [
         "CHORD.WAV",
@@ -375,6 +377,27 @@ fn config_mtime() -> Option<std::time::SystemTime> {
     config_path().and_then(|p| std::fs::metadata(p).ok()).and_then(|m| m.modified().ok())
 }
 
+/// Question handoff file written by the forked Ask window (mtime-polled by
+/// the pet, consumed on read).
+pub fn ask_path() -> std::path::PathBuf {
+    config_path()
+        .map(|p| p.with_extension("ask"))
+        .unwrap_or_else(|| std::path::PathBuf::from("bonzibuddy-rs.ask"))
+}
+
+fn ask_mtime() -> Option<std::time::SystemTime> {
+    std::fs::metadata(ask_path()).ok().and_then(|m| m.modified().ok())
+}
+
+/// Fork the Ask child window (managed ⇒ typeable; see open_ask).
+fn fork_ask() -> Result<(), std::io::Error> {
+    let exe = std::env::current_exe()?;
+    std::process::Command::new(exe)
+        .arg("--ask-ui")
+        .stdin(std::process::Stdio::null())
+        .spawn()?;
+    Ok(())
+}
 
 
 
@@ -398,19 +421,8 @@ const MENU: &[MenuItem] = &[
     MenuItem { label: "Quit", action: |p, _c| p.push(Action::Quit) },
 ];
 
-/// In-app text-entry dialogs (rendered with our own font, no widgets crate).
-#[derive(Clone)]
-enum Dialog {
-    None,
-    /// Ask Bonzi: `caret` is the char index (not byte!) of the text cursor.
-    Ask { input: String, caret: usize },
-}
-
-impl Dialog {
-    fn active(&self) -> bool {
-        !matches!(self, Dialog::None)
-    }
-}
+/// Ask/Settings text entry lives in forked WM-managed child windows
+/// (`--ask-ui` / `--settings-ui`); the pet window itself has no text input.
 
 struct App {
     assets: assets::Assets,
@@ -442,14 +454,10 @@ struct App {
     agent: agent::AgentCfg,
     agent_tx: std::sync::mpsc::Sender<agent::Msg>,
     agent_rx: std::sync::mpsc::Receiver<agent::Msg>,
-    dialog: Dialog,
-    /// X11 window that held keyboard focus before a dialog grabbed it.
-    prev_focus: Option<u32>,
     /// Config file mtime; a newer mtime means the Settings child saved.
     cfg_mtime: Option<std::time::SystemTime>,
-    /// Our own X11 window id (override-redirect ⇒ the WM never focuses it,
-    /// so dialogs must XSetInputFocus it themselves).
-    x11_id: Option<u32>,
+    /// Ask file mtime; a newer mtime means the Ask child sent a question.
+    ask_mtime: Option<std::time::SystemTime>,
 }
 
 impl App {
@@ -648,59 +656,6 @@ impl App {
         }
     }
 
-    /// Override-redirect windows are invisible to the WM, so nothing ever
-    /// gives them keyboard focus. Grab it explicitly for the duration of a
-    /// dialog (the rofi trick) and hand it back afterwards.
-    fn grab_keyboard(&mut self) {
-        #[cfg(target_os = "linux")]
-        {
-            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-            use x11rb::connection::Connection;
-            use x11rb::protocol::xproto::{ConnectionExt, InputFocus};
-            // winit 0.30's WindowExtX11 is a marker trait; the real xid comes
-            // through raw-window-handle.
-            let id: Option<u32> = self
-                .window
-                .as_ref()
-                .and_then(|w| w.window_handle().ok())
-                .and_then(|h| match h.as_raw() {
-                    RawWindowHandle::Xlib(h) => Some(h.window as u32),
-                    RawWindowHandle::Xcb(h) => Some(h.window.get()),
-                    _ => None,
-                });
-            if let Some(id) = id {
-                self.x11_id = Some(id);
-                if let Ok((conn, _)) = x11rb::connect(None) {
-                    let focus = x11rb::protocol::xproto::get_input_focus(&conn)
-                        .ok()
-                        .and_then(|c| c.reply().ok());
-                    if let Some(f) = focus {
-                        // Focus ids 0/1 are the NONE/POINTER_ROOT sentinels.
-                        self.prev_focus =
-                            if f.focus > 1 && f.focus != id { Some(f.focus) } else { None };
-                    }
-                    let _ = conn.set_input_focus(InputFocus::PARENT, id, 0u32);
-                    let _ = conn.flush();
-                }
-            }
-        }
-        if let Some(w) = &self.window {
-            w.focus_window();
-        }
-    }
-
-    fn release_keyboard(&mut self) {
-        #[cfg(target_os = "linux")]
-        if let Some(id) = self.prev_focus.take() {
-            use x11rb::connection::Connection;
-            use x11rb::protocol::xproto::{ConnectionExt, InputFocus};
-            if let Ok((conn, _)) = x11rb::connect(None) {
-                let _ = conn.set_input_focus(InputFocus::PARENT, id, 0u32);
-                let _ = conn.flush();
-            }
-        }
-    }
-
     /// Settings open in a forked child process with a normal, WM-managed
     /// window — real keyboard focus, real text inputs, paste works. The pet
     /// picks up the saved config via file mtime polling.
@@ -713,6 +668,10 @@ impl App {
         }
     }
 
+    /// Ask opens a forked child window (same trick as Settings): the pet's
+    /// own override-redirect window can never hold keyboard focus, so an
+    /// in-pet text field is untypeable under many WMs. The child writes the
+    /// question to the ask file; AboutToWait picks it up via mtime.
     fn open_ask(&mut self) {
         if !self.agent.enabled() {
             self.pet.say(
@@ -721,89 +680,9 @@ impl App {
             );
             return;
         }
-        self.dialog = Dialog::Ask { input: String::new(), caret: 0 };
-        self.grab_keyboard();
-    }
-
-    /// Route a key press to the open Ask dialog; returns true when consumed.
-    fn dialog_key(&mut self, key: &Key, text: Option<&str>) -> bool {
-        let (input, caret) = match &mut self.dialog {
-            Dialog::Ask { input, caret } => (input, caret),
-            Dialog::None => return false,
-        };
-        let chars: Vec<char> = input.chars().collect();
-        match key {
-            Key::Named(NamedKey::Escape) => {
-                self.dialog = Dialog::None;
-                self.release_keyboard();
-                return true;
-            }
-            Key::Named(NamedKey::Backspace) => {
-                if *caret > 0 {
-                    let mut c = chars;
-                    c.remove(*caret - 1);
-                    *input = c.into_iter().collect();
-                    *caret -= 1;
-                }
-                return true;
-            }
-            Key::Named(NamedKey::Delete) => {
-                if *caret < chars.len() {
-                    let mut c = chars;
-                    c.remove(*caret);
-                    *input = c.into_iter().collect();
-                }
-                return true;
-            }
-            Key::Named(NamedKey::ArrowLeft) => {
-                *caret = caret.saturating_sub(1);
-                return true;
-            }
-            Key::Named(NamedKey::ArrowRight) => {
-                *caret = (*caret + 1).min(chars.len());
-                return true;
-            }
-            Key::Named(NamedKey::Home) => {
-                *caret = 0;
-                return true;
-            }
-            Key::Named(NamedKey::End) => {
-                *caret = chars.len();
-                return true;
-            }
-            Key::Named(NamedKey::Enter) => {
-                drop(chars);
-                self.dialog_commit();
-                return true;
-            }
-            _ => {}
-        }
-        if let Some(c) =
-            text.and_then(|t| t.chars().next()).filter(|c| c.is_ascii_graphic() || *c == ' ')
-        {
-            if input.chars().count() < 400 {
-                let mut ch: Vec<char> = input.chars().collect();
-                ch.insert(*caret, c);
-                *input = ch.into_iter().collect();
-                *caret += 1;
-            }
-            return true;
-        }
-        false
-    }
-
-    fn dialog_commit(&mut self) {
-        self.release_keyboard();
-        match std::mem::replace(&mut self.dialog, Dialog::None) {
-            Dialog::Ask { input, .. } => {
-                let q = input.trim().to_string();
-                if q.is_empty() {
-                    return;
-                }
-                self.pet.say("Hmm, let me think…", 8.0);
-                agent::send(self.agent.clone(), q, self.agent_tx.clone());
-            }
-            Dialog::None => {}
+        match fork_ask() {
+            Ok(()) => self.pet.say("Type your question in the window that popped up!", 5.0),
+            Err(e) => self.pet.say(&format!("Can't open the ask window: {e}"), 6.0),
         }
     }
 
@@ -860,30 +739,6 @@ impl App {
             }
         }
 
-        // The Ask dialog draws over everything, anchored to the window top.
-        if let Dialog::Ask { input, caret } = self.dialog.clone() {
-            let pad = (10.0 * s) as i32;
-            let bw = (w as i32) - 16;
-            let bh = (lh * 3.6) as i32 + pad;
-            let bx = 8;
-            let by = 4;
-            canvas.round_rect(bx, by, bw, bh, 10, [0xE8, 0xE8, 0xF4, 255], [0, 0, 0, 255]);
-            let tx = bx as f32 + (10.0 * s) as f32;
-            let ty = by as f32 + lh;
-            render::draw_line(&mut canvas, &self.assets.font, "Ask Bonzi", tx, ty, scale, [0x40, 0x00, 0x80, 255]);
-            // Input line: white field, text ending at the caret, blinking bar.
-            let iy = ty + lh;
-            canvas.round_rect(bx + 6, (iy - lh) as i32, bw - 12, (lh * 1.3) as i32, 4, [0xFF, 0xFF, 0xFF, 255], [0x80, 0x80, 0x80, 255]);
-            let chars: Vec<char> = input.chars().collect();
-            let shown: String = chars[..caret.min(chars.len())].iter().collect();
-            render::draw_line(&mut canvas, &self.assets.font, &shown, tx, iy, scale, [0, 0, 0, 255]);
-            if self.pet.frame % 6 < 3 {
-                let cx = tx + render::text_width(&self.assets.font, &shown, scale);
-                canvas.round_rect(cx as i32, (iy - lh * 0.85) as i32, (2.0 * s).max(1.0) as i32, (lh * 1.05) as i32, 0, [0, 0, 0, 255], [0, 0, 0, 255]);
-            }
-            render::draw_line(&mut canvas, &self.assets.font, "Enter: ask  Esc: cancel", tx, iy + lh * 0.9, scale, [0x60, 0x60, 0x60, 255]);
-        }
-
         if let Some(frames) = self.assets.frames(&self.pet.anim) {
             if !frames.is_empty() {
                 let idx = self.pet.frame % frames.len();
@@ -918,8 +773,16 @@ use render::Canvas;
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Child mode: the forked Settings window (managed ⇒ real keyboard focus).
     if std::env::args().any(|a| a == "--settings-ui") {
-        if let Err(e) = settings_ui::run() {
+        if let Err(e) = settings_ui::run(false) {
             eprintln!("settings window failed: {e}");
+            return Err(e);
+        }
+        return Ok(());
+    }
+    // Child mode: the forked Ask window (same managed-window trick).
+    if std::env::args().any(|a| a == "--ask-ui") {
+        if let Err(e) = settings_ui::run(true) {
+            eprintln!("ask window failed: {e}");
             return Err(e);
         }
         return Ok(());
@@ -1018,10 +881,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         agent_tx: agent_tx,
         agent_rx: agent_rx,
-        dialog: Dialog::None,
-        prev_focus: None,
         cfg_mtime: config_mtime(),
-        x11_id: None,
+        ask_mtime: ask_mtime(),
     };
 
     let el = EventLoop::new()?;
@@ -1223,9 +1084,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             WindowEvent::KeyboardInput { event, .. }
                 if event.state == ElementState::Pressed =>
             {
-                if app.dialog.active() {
-                    app.dialog_key(&event.logical_key, event.text.as_deref());
-                } else if matches!(event.logical_key, Key::Named(NamedKey::Escape)) {
+                if matches!(event.logical_key, Key::Named(NamedKey::Escape)) {
                     app.pet.menu_open = false;
                 }
             }
@@ -1310,6 +1169,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         model: cfg.agent_model,
                     };
                     app.pet.say("Ooh, a brain upgrade! Try Ask Bonzi now.", 4.0);
+                }
+            }
+            // Ask child delivered a question? Send it to the agent.
+            if let Some(mt) = ask_mtime() {
+                // `!=` not `is_some_and(>)`: the file usually does not exist
+                // at startup, so the baseline starts as None.
+                if app.ask_mtime != Some(mt) {
+                    app.ask_mtime = Some(mt);
+                    let q = std::fs::read_to_string(ask_path()).unwrap_or_default();
+                    let _ = std::fs::write(ask_path(), "");
+                    let q = q.trim().to_string();
+                    if !q.is_empty() {
+                        if app.agent.enabled() {
+                            app.pet.say("Hmm, let me think…", 8.0);
+                            agent::send(app.agent.clone(), q, app.agent_tx.clone());
+                        } else {
+                            app.pet.say("I can't chat without a brain server! Set an API endpoint in Settings first, heh.", 5.0);
+                        }
+                    }
                 }
             }
             #[cfg(target_os = "linux")]

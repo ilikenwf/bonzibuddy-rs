@@ -84,15 +84,18 @@ string in the tree is the crate `scoped-tls` (thread-local storage, not TLS).
   can't host reliable text entry because the WM never focuses an
   override-redirect window. The surface is sized to the window's physical
   pixels, so it renders correctly under HiDPI/fractional scaling.
-- **Ask Bonzi…** (in-pet dialog) grabs X11 input focus itself
-  (`XSetInputFocus`) while open and hands it back on Enter/Esc; it supports
-  caret editing (arrows, Home/End, Delete, mid-string insert).
+- **Ask Bonzi…** opens the same kind of forked child window (`--ask-ui`):
+  type your question, Enter writes it to a handoff file the pet picks up
+  via mtime and sends to your configured endpoint; Esc closes.
 - Original WAV sound effects (`CHORD.WAV`, `Snd1/2.wav`, `Intro2.wav`) plus
-  the 22 original voice samples. One voice at a time: every new action cuts
-  off whatever was playing or being spoken before it. **Dance!** loops the
-  original intro jingle as dance music (the 1999 "dance to MIDI" was a
-  paid Bonzi Unlimited feature — here it's free and offline) over the
-  12-second headphone dance loop, then `HEADPHONESRETURN`.
+  the 22 original voice samples, each wired to the animation frame that
+  triggered it in the original `.acs` (mail checks, banana misses, reading
+  grunts…). One voice at a time: every new action cuts off whatever was
+  playing before it, and a test asserts no voice sample is left unreachable.
+  **Dance!** loops `SUNGLASSESCONTINUED` — the actual dance from the
+  `.acs` (shades on, snapping) — over the original intro jingle (the 1999
+  "dance to MIDI" was a paid Bonzi Unlimited feature; here it's free and
+  offline).
 - `--test-audio` plays every bundled sound once, in sequence, and reports
   which output path (cpal device or `paplay`/`aplay`/`afplay`/`ffplay`)
   handled each one — the quickest way to confirm sound works on a new box.

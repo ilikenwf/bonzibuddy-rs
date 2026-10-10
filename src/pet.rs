@@ -56,9 +56,12 @@ const IDLE_POOL: &[&str] = &[
     "HEARING2", "HEARING3", "HANDSBEHIND", "RESTPOSE", "SUGGEST",
 ];
 const FUN_POOL: &[&str] = &[
-    "BANANA", "JUGGLE", "BUTTERNUT", "GIGGLE", "DOMAGIC1", "DOMAGIC2", "WINK", "BLOWKISS",
-    "HUG", "SURPRISED", "UNBELIEVABLE", "CONFUSED", "SAD", "WAVE", "CONGRATULATE", "SHOOSH",
-    "READ", "WRITE", "SEARCH", "SUNGLASSESCONTINUED",
+    "BANANA", "BANANAMISS", "JUGGLE", "BUTTERNUT", "GIGGLE", "DOMAGIC1", "DOMAGIC2", "WINK",
+    "BLOWKISS", "HUG", "SURPRISED", "UNBELIEVABLE", "CONFUSED", "SAD", "WAVE", "CONGRATULATE",
+    "SHOOSH", "GETATTENTION", "GETATTENTION2", "MAILCHECK", "MAILCHECKEMPTY", "MAILCHECKFULL",
+    "MAILNEXT", "MAILREAD", "MOVEDOWN", "MOVEUP", "READ", "READCONTINUED", "READLOOKUP",
+    "READLOOKUPCONTINUED", "READING", "WRITE", "WRITECONTINUED", "WRITEONCE", "WRITEONCEAGAIN",
+    "WRITING", "SEARCH", "SUNGLASSESCONTINUED",
 ];
 const PETTED_POOL: &[&str] = &["PLEASED", "PLEASEDSOFT", "PLEASEDHARD", "GIGGLE", "WINK", "HUG"];
 const TALK_POOL: &[&str] = &["EXPLAIN", "EXPLAIN2", "EXPLAIN3", "EXPLAIN4", "GREET", "SUGGEST"];
@@ -212,9 +215,12 @@ impl Pet {
     }
 
     pub fn dance(&mut self) {
-        // The original dance: headphones on, jingle looping, then the
-        // HEADPHONESRETURN tail (12 s ≈ 3 loops of the 3.5 s intro jingle).
-        self.push(Action::AnimateLoop("HEADPHONESCONTINUED".into(), 12_000));
+        // The real dance in the .acs is SUNGLASSESCONTINUED (shades on,
+        // snapping, hip sways); HEADPHONESCONTINUED is just listening.
+        // Music: the original dance MIDI was a paid "Bonzi Unlimited"
+        // feature that never shipped in the payload — the intro jingle
+        // loops in its place, offline and free.
+        self.push(Action::AnimateLoop("SUNGLASSESCONTINUED".into(), 13_000));
         self.push(Action::Music("Intro2.wav".into()));
         self.push(Action::Speak("I just love to dance!".into()));
     }
@@ -549,5 +555,82 @@ mod tests {
         assert_eq!(return_of("READCONTINUED"), "READRETURN");
         assert_eq!(return_of("MOVELEFT"), "MOVELEFTRETURN");
         assert_eq!(return_of("IDLE1_1"), "");
+    }
+
+    /// The whole point of the voice-clip wiring is that no original sound
+    /// is stranded: every animation carrying an audio ref must be reachable
+    /// from a pool or a hardcoded trigger (walking, hide/show, sing),
+    /// including via return-animation chains.
+    #[test]
+    fn every_audio_carrying_animation_is_reachable() {
+        let raw: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/assets/bonzi/animations.json"
+            ))
+            .expect("animations.json"),
+        )
+        .expect("valid json");
+        let mut reach: std::collections::HashSet<String> = IDLE_POOL
+            .iter()
+            .chain(FUN_POOL.iter())
+            .chain(PETTED_POOL.iter())
+            .chain(TALK_POOL.iter())
+            .map(|s| s.to_string())
+            .collect();
+        // Hardcoded triggers: hide/reveal, walking, sing's headphone loop.
+        for a in [
+            "HIDE",
+            "HIDESHOW",
+            "SHOW",
+            "MOVELEFT",
+            "MOVERIGHT",
+            "MOVELEFTRETURN",
+            "MOVERIGHTRETURN",
+            "HEADPHONESCONTINUED",
+        ] {
+            reach.insert(a.to_string());
+        }
+        // Close over return animations (json-declared and naming convention).
+        loop {
+            let mut added = false;
+            let mut add: Vec<String> = Vec::new();
+            for a in &reach {
+                if let Some(r) = raw.get(a).and_then(|v| v["return_anim"].as_str()) {
+                    if !r.is_empty() && !reach.contains(r) {
+                        add.push(r.to_string());
+                    }
+                }
+                let r = return_of(a);
+                if !r.is_empty() && !reach.contains(&r) {
+                    add.push(r);
+                }
+            }
+            for a in add {
+                reach.insert(a);
+                added = true;
+            }
+            if !added {
+                break;
+            }
+        }
+        let missing: Vec<String> = raw
+            .as_object()
+            .unwrap()
+            .iter()
+            .filter_map(|(k, v)| {
+                let has_audio = v["frames"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|f| f["audio"].as_u64().unwrap_or(65535) != 65535);
+                if has_audio && !reach.contains(k) {
+                    Some(k.clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(missing.is_empty(), "audio-carrying animations never triggered: {missing:?}");
     }
 }
