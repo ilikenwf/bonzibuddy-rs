@@ -33,6 +33,8 @@ pub enum Action {
 pub enum Effect {
     PlaySound(String),
     SpeakTts(String),
+    /// Ask Bonzi reply: shown verbatim (no 14 s bubble cap) and voiced.
+    AgentReply(String),
     Quit,
 }
 
@@ -56,7 +58,7 @@ pub struct Pet {
     pub looping: bool,
     loop_until: Option<Instant>,
     pub bubble: Option<String>,
-    bubble_until: Option<Instant>,
+    pub bubble_until: Option<Instant>,
     pub speaking: bool,
     pub mouth: u8,
     mouth_at: Instant,

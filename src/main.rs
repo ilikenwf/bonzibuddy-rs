@@ -44,16 +44,16 @@ struct Opts {
 /// Persisted user settings (`$XDG_CONFIG_HOME/bonzibuddy-rs.json`).
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(default)]
-struct Config {
-    scale: f64,
+pub struct Config {
+    pub scale: f64,
     /// Physical window position; restored at startup when on-screen.
-    x: Option<i32>,
-    y: Option<i32>,
+    pub x: Option<i32>,
+    pub y: Option<i32>,
     /// Optional OpenAI-compatible chat endpoint ("Ask Bonzi…"). Empty = off;
     /// with it empty the binary never touches the network.
-    agent_endpoint: String,
-    agent_key: String,
-    agent_model: String,
+    pub agent_endpoint: String,
+    pub agent_key: String,
+    pub agent_model: String,
 }
 
 impl Default for Config {
@@ -105,7 +105,7 @@ fn config_path() -> Option<std::path::PathBuf> {
     Some(dir.join("bonzibuddy-rs.json"))
 }
 
-fn load_config() -> Config {
+pub fn load_config() -> Config {
     let mut cfg: Config = config_path()
         .and_then(|p| std::fs::read(p).ok())
         .and_then(|b| serde_json::from_slice(&b).ok())
@@ -114,7 +114,7 @@ fn load_config() -> Config {
     cfg
 }
 
-fn save_config(cfg: &Config) {
+pub fn save_config(cfg: &Config) {
     if let Some(p) = config_path() {
         if let Some(dir) = p.parent() {
             let _ = std::fs::create_dir_all(dir);
@@ -212,31 +212,94 @@ impl Drop for QuietStderr {
 /// probed the default host and silently ran silent.
 #[cfg(feature = "audio")]
 fn open_audio() -> Option<(rodio::OutputStream, rodio::OutputStreamHandle)> {
+    let verbose = std::env::var("BONZI_AUDIO_DEBUG").is_ok();
     #[cfg(unix)]
-    let _quiet = QuietStderr::new();
-    use cpal::traits::HostTrait;
-    if let Ok(x) = rodio::OutputStream::try_default() {
-        return Some(x);
+    // ALSA/JACK print probe noise to stderr; keep it only when debugging.
+    let _quiet = if verbose { None } else { Some(QuietStderr::new()) };
+    #[cfg(not(unix))]
+    let _ = &verbose;
+    use cpal::traits::{DeviceTrait, HostTrait};
+    if verbose {
+        eprintln!("[audio] hosts: {:?}", cpal::platform::ALL_HOSTS);
+    }
+    match rodio::OutputStream::try_default() {
+        Ok(x) => {
+            if verbose {
+                eprintln!("[audio] default device opened OK");
+            }
+            return Some(x);
+        }
+        Err(e) => {
+            if verbose {
+                eprintln!("[audio] default device failed: {e}");
+            }
+        }
     }
     for id in cpal::platform::ALL_HOSTS {
         let Ok(host) = cpal::platform::host_from_id(*id) else {
+            if verbose {
+                eprintln!("[audio] host {id:?}: unavailable");
+            }
             continue;
         };
         if let Some(dev) = host.default_output_device() {
-            if let Ok(x) = rodio::OutputStream::try_from_device(&dev) {
-                return Some(x);
+            let name = dev.name().unwrap_or_else(|_| "?".into());
+            match rodio::OutputStream::try_from_device(&dev) {
+                Ok(x) => {
+                    if verbose {
+                        eprintln!("[audio] opened default of host {id:?}: {name}");
+                    }
+                    return Some(x);
+                }
+                Err(e) if verbose => eprintln!("[audio] host {id:?} default {name}: {e}"),
+                Err(_) => {}
             }
         }
-        let Ok(devs) = host.devices() else { continue };
-        for d in devs {
-            if let Ok(x) = rodio::OutputStream::try_from_device(&d) {
-                return Some(x);
+        match host.devices() {
+            Ok(devs) => {
+                for d in devs {
+                    let name = d.name().unwrap_or_else(|_| "?".into());
+                    match rodio::OutputStream::try_from_device(&d) {
+                        Ok(x) => {
+                            if verbose {
+                                eprintln!("[audio] opened {name} on host {id:?}");
+                            }
+                            return Some(x);
+                        }
+                        Err(e) if verbose => eprintln!("[audio] {name} on {id:?}: {e}"),
+                        Err(_) => {}
+                    }
+                }
             }
+            Err(e) if verbose => eprintln!("[audio] host {id:?} enumerate: {e}"),
+            Err(_) => {}
         }
     }
     None
 }
 const ABOUT: &str = "BonziBuddy-rs v1.0\nA safe reimagining of the 1999 original.\nNo phone-home. No ads. No spyware.\n100% offline. Original character art.\nRight-click me for the menu!";
+
+mod settings_ui;
+/// Settings live in a forked child process running a *managed* window, so
+/// the WM focuses it and native text inputs work (paste, IME, dead keys).
+/// The child re-executes this binary with `--settings-ui`; it writes the
+/// config file and exits — the pet reloads config when it changes (mtime).
+fn fork_settings() -> Result<(), std::io::Error> {
+    let exe = std::env::current_exe()?;
+    std::process::Command::new(exe)
+        .arg("--settings-ui")
+        .stdin(std::process::Stdio::null())
+        .spawn()?;
+    Ok(())
+}
+
+/// True when the config file's mtime changed since `last` (child saved).
+fn config_mtime() -> Option<std::time::SystemTime> {
+    config_path().and_then(|p| std::fs::metadata(p).ok()).and_then(|m| m.modified().ok())
+}
+
+
+
 
 struct MenuItem {
     label: &'static str,
@@ -258,10 +321,11 @@ const MENU: &[MenuItem] = &[
 ];
 
 /// In-app text-entry dialogs (rendered with our own font, no widgets crate).
+#[derive(Clone)]
 enum Dialog {
     None,
-    Settings { fields: [String; 3], sel: usize },
-    Ask { input: String },
+    /// Ask Bonzi: `caret` is the char index (not byte!) of the text cursor.
+    Ask { input: String, caret: usize },
 }
 
 impl Dialog {
@@ -298,6 +362,8 @@ struct App {
     dialog: Dialog,
     /// X11 window that held keyboard focus before a dialog grabbed it.
     prev_focus: Option<u32>,
+    /// Config file mtime; a newer mtime means the Settings child saved.
+    cfg_mtime: Option<std::time::SystemTime>,
     /// Our own X11 window id (override-redirect ⇒ the WM never focuses it,
     /// so dialogs must XSetInputFocus it themselves).
     x11_id: Option<u32>,
@@ -379,6 +445,18 @@ impl App {
             match e {
                 Effect::PlaySound(name) => self.play_sound(&name),
                 Effect::SpeakTts(t) => {
+                    if self.opts.tts {
+                        tts::speak(&t);
+                    }
+                }
+                Effect::AgentReply(t) => {
+                    // Long model answers must not be truncated by the 14 s
+                    // bubble cap: show for the full reading time.
+                    let secs = (4.0 + t.chars().count() as f64 * 0.09).min(60.0);
+                    self.pet.bubble = Some(t.clone());
+                    self.pet.bubble_until =
+                        Some(Instant::now() + Duration::from_secs_f64(secs));
+                    self.pet.speaking = true;
                     if self.opts.tts {
                         tts::speak(&t);
                     }
@@ -473,13 +551,16 @@ impl App {
         }
     }
 
+    /// Settings open in a forked child process with a normal, WM-managed
+    /// window — real keyboard focus, real text inputs, paste works. The pet
+    /// picks up the saved config via file mtime polling.
     fn open_settings(&mut self) {
-        let cfg = load_config();
-        self.dialog = Dialog::Settings {
-            fields: [cfg.agent_endpoint, cfg.agent_key, cfg.agent_model],
-            sel: 0,
-        };
-        self.grab_keyboard();
+        match fork_settings() {
+            Ok(()) => self
+                .pet
+                .say("A settings window should have popped up — mind my banana!", 5.0),
+            Err(e) => self.pet.say(&format!("Settings won't start: {e}"), 6.0),
+        }
     }
 
     fn open_ask(&mut self) {
@@ -490,12 +571,29 @@ impl App {
             );
             return;
         }
-        self.dialog = Dialog::Ask { input: String::new() };
+        self.dialog = Dialog::Ask { input: String::new(), caret: 0 };
         self.grab_keyboard();
     }
 
-    /// Route a key press to the open dialog; returns true when consumed.
+    /// True when the pointer is over the buddy sprite or an open menu —
+    /// the only regions that swallow clicks; elsewhere a drag moves the window.
+    fn over_pet(&self, x: f64, y: f64) -> bool {
+        let (sx, sy, sw, sh) = self.sprite_rect;
+        if x >= sx as f64 && x < (sx + sw) as f64 && y >= sy as f64 && y < (sy + sh) as f64 {
+            return true;
+        }
+        self.menu_rects.iter().any(|(_, (mx, my, mw, mh))| {
+            x >= *mx as f64 && x < (mx + mw) as f64 && y >= *my as f64 && y < (my + mh) as f64
+        })
+    }
+
+    /// Route a key press to the open Ask dialog; returns true when consumed.
     fn dialog_key(&mut self, key: &Key, text: Option<&str>) -> bool {
+        let (input, caret) = match &mut self.dialog {
+            Dialog::Ask { input, caret } => (input, caret),
+            Dialog::None => return false,
+        };
+        let chars: Vec<char> = input.chars().collect();
         match key {
             Key::Named(NamedKey::Escape) => {
                 self.dialog = Dialog::None;
@@ -503,24 +601,40 @@ impl App {
                 return true;
             }
             Key::Named(NamedKey::Backspace) => {
-                match &mut self.dialog {
-                    Dialog::Settings { fields, sel } => {
-                        fields[*sel].pop();
-                    }
-                    Dialog::Ask { input } => {
-                        input.pop();
-                    }
-                    Dialog::None => return false,
+                if *caret > 0 {
+                    let mut c = chars;
+                    c.remove(*caret - 1);
+                    *input = c.into_iter().collect();
+                    *caret -= 1;
                 }
                 return true;
             }
-            Key::Named(NamedKey::Tab) => {
-                if let Dialog::Settings { sel, .. } = &mut self.dialog {
-                    *sel = (*sel + 1) % 3;
-                    return true;
+            Key::Named(NamedKey::Delete) => {
+                if *caret < chars.len() {
+                    let mut c = chars;
+                    c.remove(*caret);
+                    *input = c.into_iter().collect();
                 }
+                return true;
+            }
+            Key::Named(NamedKey::ArrowLeft) => {
+                *caret = caret.saturating_sub(1);
+                return true;
+            }
+            Key::Named(NamedKey::ArrowRight) => {
+                *caret = (*caret + 1).min(chars.len());
+                return true;
+            }
+            Key::Named(NamedKey::Home) => {
+                *caret = 0;
+                return true;
+            }
+            Key::Named(NamedKey::End) => {
+                *caret = chars.len();
+                return true;
             }
             Key::Named(NamedKey::Enter) => {
+                drop(chars);
                 self.dialog_commit();
                 return true;
             }
@@ -529,18 +643,11 @@ impl App {
         if let Some(c) =
             text.and_then(|t| t.chars().next()).filter(|c| c.is_ascii_graphic() || *c == ' ')
         {
-            match &mut self.dialog {
-                Dialog::Settings { fields, sel } => {
-                    if fields[*sel].len() < 200 {
-                        fields[*sel].push(c);
-                    }
-                }
-                Dialog::Ask { input } => {
-                    if input.len() < 400 {
-                        input.push(c);
-                    }
-                }
-                Dialog::None => return false,
+            if input.chars().count() < 400 {
+                let mut ch: Vec<char> = input.chars().collect();
+                ch.insert(*caret, c);
+                *input = ch.into_iter().collect();
+                *caret += 1;
             }
             return true;
         }
@@ -550,27 +657,7 @@ impl App {
     fn dialog_commit(&mut self) {
         self.release_keyboard();
         match std::mem::replace(&mut self.dialog, Dialog::None) {
-            Dialog::Settings { fields, .. } => {
-                let mut cfg = load_config();
-                cfg.agent_endpoint = fields[0].trim().to_string();
-                cfg.agent_key = fields[1].trim().to_string();
-                cfg.agent_model = fields[2].trim().to_string();
-                save_config(&cfg);
-                self.agent = agent::AgentCfg {
-                    endpoint: cfg.agent_endpoint.clone(),
-                    key: cfg.agent_key.clone(),
-                    model: cfg.agent_model.clone(),
-                };
-                self.pet.say(
-                    if self.agent.enabled() {
-                        "Ooh, a brain upgrade! Try Ask Bonzi now."
-                    } else {
-                        "Back to fully offline mode. My secrets are safe."
-                    },
-                    4.0,
-                );
-            }
-            Dialog::Ask { input } => {
+            Dialog::Ask { input, .. } => {
                 let q = input.trim().to_string();
                 if q.is_empty() {
                     return;
@@ -635,42 +722,28 @@ impl App {
             }
         }
 
-        // Dialogs draw over everything, anchored to the window top.
-        if self.dialog.active() {
-            fn field(s: &str) -> String {
-                if s.is_empty() { "…".into() } else { s.chars().take(40).collect() }
-            }
-            let (title, rows, hint) = match &self.dialog {
-                Dialog::None => unreachable!(),
-                Dialog::Settings { fields, sel } => (
-                    "Agent settings",
-                    vec![
-                        format!("Endpoint: {}{}", if *sel == 0 { "> " } else { "  " }, field(&fields[0])),
-                        format!("API key:  {}{}", if *sel == 1 { "> " } else { "  " }, field(&fields[1])),
-                        format!("Model:    {}{}", if *sel == 2 { "> " } else { "  " }, field(&fields[2])),
-                    ],
-                    "Tab: field  Enter: save  Esc: cancel",
-                ),
-                Dialog::Ask { input } => (
-                    "Ask Bonzi",
-                    vec![format!("> {}", field(input)), " ".into()],
-                    "Enter: ask  Esc: cancel",
-                ),
-            };
+        // The Ask dialog draws over everything, anchored to the window top.
+        if let Dialog::Ask { input, caret } = self.dialog.clone() {
             let pad = (10.0 * s) as i32;
             let bw = (w as i32) - 16;
-            let bh = (lh * (rows.len() as f32 + 2.6)) as i32 + pad;
+            let bh = (lh * 3.6) as i32 + pad;
             let bx = 8;
             let by = 4;
             canvas.round_rect(bx, by, bw, bh, 10, [0xE8, 0xE8, 0xF4, 255], [0, 0, 0, 255]);
-            let mut ty = by as f32 + lh;
-            render::draw_line(&mut canvas, &self.assets.font, title, bx as f32 + (10.0 * s) as f32, ty, scale, [0x40, 0x00, 0x80, 255]);
-            ty += lh;
-            for row in &rows {
-                render::draw_line(&mut canvas, &self.assets.font, row, bx as f32 + (10.0 * s) as f32, ty, scale, [0, 0, 0, 255]);
-                ty += lh;
+            let tx = bx as f32 + (10.0 * s) as f32;
+            let ty = by as f32 + lh;
+            render::draw_line(&mut canvas, &self.assets.font, "Ask Bonzi", tx, ty, scale, [0x40, 0x00, 0x80, 255]);
+            // Input line: white field, text ending at the caret, blinking bar.
+            let iy = ty + lh;
+            canvas.round_rect(bx + 6, (iy - lh) as i32, bw - 12, (lh * 1.3) as i32, 4, [0xFF, 0xFF, 0xFF, 255], [0x80, 0x80, 0x80, 255]);
+            let chars: Vec<char> = input.chars().collect();
+            let shown: String = chars[..caret.min(chars.len())].iter().collect();
+            render::draw_line(&mut canvas, &self.assets.font, &shown, tx, iy, scale, [0, 0, 0, 255]);
+            if self.pet.frame % 6 < 3 {
+                let cx = tx + render::text_width(&self.assets.font, &shown, scale);
+                canvas.round_rect(cx as i32, (iy - lh * 0.85) as i32, (2.0 * s).max(1.0) as i32, (lh * 1.05) as i32, 0, [0, 0, 0, 255], [0, 0, 0, 255]);
             }
-            render::draw_line(&mut canvas, &self.assets.font, hint, bx as f32 + (10.0 * s) as f32, ty + lh * 0.35, scale, [0x60, 0x60, 0x60, 255]);
+            render::draw_line(&mut canvas, &self.assets.font, "Enter: ask  Esc: cancel", tx, iy + lh * 0.9, scale, [0x60, 0x60, 0x60, 255]);
         }
 
         if let Some(frames) = self.assets.frames(&self.pet.anim) {
@@ -705,6 +778,10 @@ impl App {
 use render::Canvas;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Child mode: the forked Settings window (managed ⇒ real keyboard focus).
+    if std::env::args().any(|a| a == "--settings-ui") {
+        return settings_ui::run();
+    }
     // A desktop pet needs override-redirect semantics (no taskbar, always
     // above, free programmatic movement). Native Wayland offers none of that
     // to normal clients — walking would freeze and the compositor decides
@@ -760,7 +837,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let audio = if opts.audio { open_audio() } else { None };
     #[cfg(feature = "audio")]
     if audio.is_none() && opts.audio {
-        eprintln!("note: no audio device; running silent");
+        eprintln!(
+            "note: no audio device via cpal; effects fall back to paplay/aplay/afplay/ffplay.\n\
+             (set BONZI_AUDIO_DEBUG=1 to see every device probe; run under PipeWire/Pulse for sound)"
+        );
     }
 
     let mut app = App {
@@ -792,6 +872,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         agent_rx: agent_rx,
         dialog: Dialog::None,
         prev_focus: None,
+        cfg_mtime: config_mtime(),
         x11_id: None,
     };
 
@@ -938,22 +1019,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
             WindowEvent::CursorMoved { position, .. } => {
                 app.mouse = (position.x, position.y);
-                let App { press, dragging, window, .. } = &mut app;
-                if let (Some(((pmx, pmy), (wpx, wpy))), Some(window)) = (*press, &mut *window) {
+                if let Some(((pmx, pmy), (wpx, wpy))) = app.press {
                     let dx = position.x - pmx;
                     let dy = position.y - pmy;
                     if dx.abs() + dy.abs() > 6.0 {
-                        *dragging = true;
-                        // Wayland cannot move a window from the client: hand the drag
-                        // to the compositor (also used on X11/macOS/Windows when
-                        // supported); fall back to manual positioning otherwise.
-                        if window.drag_window().is_err() {
+                        if app.over_pet(pmx, pmy) {
+                            // Drag started on the buddy: petting/menu area —
+                            // don't move the window, keep it a click candidate.
+                            app.dragging = true;
+                        } else if let Some(window) = &app.window {
+                            // Empty window area: drag the whole window. An
+                            // override-redirect window is unmanaged, so
+                            // drag_window() (a WM operation) cannot work —
+                            // move it manually instead.
+                            app.dragging = true;
+                            let (ax, ay, aw, ah) = window
+                                .primary_monitor()
+                                .map(|m| {
+                                    (
+                                        m.position().x,
+                                        m.position().y,
+                                        m.size().width as i32,
+                                        m.size().height as i32,
+                                    )
+                                })
+                                .unwrap_or((0, 0, 1920, 1080));
+                            let nx = (wpx as f64 + dx).clamp(ax as f64, (ax + aw) as f64);
+                            let ny = (wpy as f64 + dy).clamp(ay as f64, (ay + ah) as f64);
                             window.set_outer_position(Position::Physical(PhysicalPosition::new(
-                                (wpx as f64 + dx) as i32,
-                                (wpy as f64 + dy) as i32,
+                                nx as i32, ny as i32,
                             )));
-                        } else {
-                            *press = None;
                         }
                     }
                 }
@@ -1047,13 +1142,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             while let Ok(agent::Msg::Reply(r)) = app.agent_rx.try_recv() {
                 match r {
                     Ok(text) => {
-                        let secs = (3.0 + text.len() as f64 * 0.06).clamp(4.0, 14.0);
-                        app.pet.say(&text, secs);
+                        let mut fx = vec![pet::Effect::AgentReply(text)];
                         if app.pet.is_idle() {
                             app.pet.set_anim("EXPLAIN", false);
                         }
+                        fx.append(&mut app.pet.pending);
+                        app.dispatch_effects(fx, el);
                     }
                     Err(e) => app.pet.say(&format!("My brain went fuzzy: {e}"), 6.0),
+                }
+            }
+            // Settings child saved the config? Reload agent settings.
+            if let Some(mt) = config_mtime() {
+                if app.cfg_mtime.is_some_and(|m| mt > m) {
+                    app.cfg_mtime = Some(mt);
+                    let cfg = load_config();
+                    app.agent = agent::AgentCfg {
+                        endpoint: cfg.agent_endpoint,
+                        key: cfg.agent_key,
+                        model: cfg.agent_model,
+                    };
+                    app.pet.say("Ooh, a brain upgrade! Try Ask Bonzi now.", 4.0);
                 }
             }
             #[cfg(target_os = "linux")]

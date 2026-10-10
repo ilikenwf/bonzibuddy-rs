@@ -64,14 +64,22 @@ string in the tree is the crate `scoped-tls` (thread-local storage, not TLS).
   Quit; the buddy menu's "Hide" minimizes to the tray. On Linux this needs
   `libappindicator` (e.g. `pacman -S libappindicator`); without a tray, Hide
   auto-returns after 8 s.
-- Draggable borderless window; walks along the bottom of the work area and
-  turns at screen edges. Walk speed is wall-clock (150 logical px/s at 1×,
-  scaling with zoom and DPI) so the vine-swing feet never slide on ice at
-  120 Hz or after a frame hitch.
-- Settings/Ask dialogs grab X11 input focus themselves (`XSetInputFocus`):
-  an override-redirect window is invisible to the WM, so without this the
-  keyboard would never reach the text fields. Focus is handed back when the
-  dialog closes.
+- Drag him anywhere: dragging the **empty window area** moves the window
+  (manual `set_outer_position` — an override-redirect window is unmanaged,
+  so `drag_window()` cannot work); dragging the **buddy himself** pets him
+  instead of moving the window. He walks along the bottom of the work area
+  and turns at screen edges; walk speed is wall-clock (150 logical px/s at
+  1×, scaling with zoom and DPI) so the vine-swing feet never slide on ice
+  at 120 Hz or after a frame hitch.
+- **Settings…** opens a separate, normal (WM-managed) window — a forked
+  child process (`--settings-ui`) with real text fields: click to place the
+  caret, arrows/Home/End/Delete, Tab between fields, Enter/Save writes the
+  config and the pet hot-reloads it via file mtime. The pet's own window
+  can't host reliable text entry because the WM never focuses an
+  override-redirect window.
+- **Ask Bonzi…** (in-pet dialog) grabs X11 input focus itself
+  (`XSetInputFocus`) while open and hands it back on Enter/Esc; it supports
+  caret editing (arrows, Home/End, Delete, mid-string insert).
 - Original WAV sound effects (`CHORD.WAV`, `Snd1/2.wav`, `Intro2.wav`).
 - Scroll-wheel over the buddy resizes it (0.5×–4×); zoom **and window
   position** persist across restarts (`$XDG_CONFIG_HOME/bonzibuddy-rs.json`);
@@ -108,9 +116,16 @@ working. Set `BONZI_WAYLAND=1` to opt out and use native Wayland instead
 Sound effects play through cpal with the **JACK backend enabled** in addition
 to ALSA: if you run jackd (or PipeWire's jack bridge) Bonzi connects to it
 directly. If the default device is busy or misconfigured, every enumerated
-device is tried before falling back to silence. ALSA/JACK print
-connection-probe failures to stderr even when another backend works, so the
-probe phase runs with stderr silenced on Unix.
+device is tried; if none opens, playback falls back to `paplay`/`aplay`/
+`afplay`/`ffplay`, and finally to silence. ALSA/JACK print connection-probe
+failures to stderr even when another backend works, so the probe phase runs
+with stderr silenced on Unix.
+
+No sound? Run with `BONZI_AUDIO_DEBUG=1` — every host and device probe is
+printed (`[audio] host Alsa default …: <error>`), and the fallback chain
+tells you which player it used. On PipeWire desktops the ALSA default is
+usually fine; a "no audio device" note with no `[audio]` lines means the
+`audio` feature was compiled out.
 
 ## Building & running
 

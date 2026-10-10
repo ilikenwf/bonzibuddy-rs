@@ -98,6 +98,12 @@ pub fn line_height(font: &FontArc, scale: PxScale) -> f32 {
     (sf.ascent() - sf.descent() + sf.line_gap()).max(scale.y * 1.15)
 }
 
+/// Advance width of `text` at `scale` (for caret placement).
+pub fn text_width(font: &FontArc, text: &str, scale: PxScale) -> f32 {
+    let sf = font.as_scaled(scale);
+    text.chars().map(|c| sf.h_advance(sf.glyph_id(c))).sum()
+}
+
 /// Draw one line of text with its baseline at (x, y).
 pub fn draw_line(canvas: &mut Canvas, font: &FontArc, text: &str, x: f32, y: f32, scale: PxScale, color: [u8; 4]) {
     let sf = font.as_scaled(scale);
