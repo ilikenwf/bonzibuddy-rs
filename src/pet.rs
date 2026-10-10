@@ -17,6 +17,9 @@ pub enum Action {
     Animate(String),
     /// Loop an animation for N ms, then its return animation if any.
     AnimateLoop(String, u64),
+    /// Choreographed one-shot sequence: each animation plays to its end,
+    /// then the next starts; the last one returns to idle normally.
+    DanceSeq(Vec<String>),
     /// Speech bubble (+ optional local TTS).
     Speak(String),
     /// Combined: gesture + talk.
@@ -43,8 +46,6 @@ pub enum Effect {
     /// TTS child) before its own sounds start.
     StopAll,
     SpeakTts(String),
-    /// Ask Bonzi reply: shown verbatim (no 14 s bubble cap) and voiced.
-    AgentReply(String),
     Quit,
 }
 
@@ -96,6 +97,11 @@ pub struct Pet {
     seen: (String, usize),
     /// True while a Music action's background loop is running.
     pub music_on: bool,
+    /// Remaining animations of a DanceSeq, played one per anim_finished.
+    dance_q: VecDeque<String>,
+    /// voice clips and idle gags are suppressed so nothing cuts off the
+    /// answer being spoken. User menu actions still interrupt (user wins).
+    chat_lock: Option<Instant>,
 }
 
 fn pick<'a>(pool: &'a [&'a str], fallback: &'a str) -> &'a str {
@@ -130,6 +136,8 @@ impl Pet {
             pending: Vec::new(),
             seen: ("IDLE1_1".into(), 0),
             music_on: false,
+            dance_q: VecDeque::new(),
+            chat_lock: None,
         }
     }
 
@@ -165,6 +173,40 @@ impl Pet {
         self.bubble_now(text.to_string(), secs);
     }
 
+    /// An agent answer: highest-priority speech. Drops any queued gag so a
+    /// half-queued joke can't cut the reply off, shows the full answer (no
+    /// 14 s bubble cap), and locks out idle chatter until it has been read
+    /// and spoken.
+    pub fn chat_reply(&mut self, text: &str) {
+        self.queue.clear();
+        self.dance_q.clear();
+        self.walk_dir = 0;
+        let secs = (4.0 + text.chars().count() as f64 * 0.09).min(60.0);
+        self.bubble = Some(text.to_string());
+        self.bubble_until = Some(Instant::now() + Duration::from_secs_f64(secs));
+        self.speaking = true;
+        self.pending.push(Effect::SpeakTts(text.to_string()));
+        // Lock a little past the bubble: TTS usually outlives the text timer.
+        self.chat_lock = Some(Instant::now() + Duration::from_secs_f64(secs + 2.0));
+    }
+
+    /// Apply a model-requested stage direction (`[anim:NAME]`). Visual only
+    /// — never touches audio, so it cannot cut off the reply being spoken.
+    pub fn stage(&mut self, name: &str) {
+        match name {
+            "WALK" => {
+                self.walk_dir = if rand::rng().random_bool(0.5) { -1 } else { 1 };
+                self.walk_until = Some(Instant::now() + Duration::from_secs(6));
+                let a = if self.walk_dir < 0 { "MOVELEFT" } else { "MOVERIGHT" };
+                self.set_anim(a, true);
+            }
+            "HIDE" => self.hide_now(),
+            other => {
+                self.walk_dir = 0;
+                self.set_anim(other, false);
+            }
+        }
+    }
     pub fn trick(&mut self) {
         self.push(Action::Animate(pick(FUN_POOL, "GIGGLE").to_string()));
     }
@@ -215,12 +257,18 @@ impl Pet {
     }
 
     pub fn dance(&mut self) {
-        // The real dance in the .acs is SUNGLASSESCONTINUED (shades on,
-        // snapping, hip sways); HEADPHONESCONTINUED is just listening.
-        // Music: the original dance MIDI was a paid "Bonzi Unlimited"
-        // feature that never shipped in the payload — the intro jingle
-        // loops in its place, offline and free.
-        self.push(Action::AnimateLoop("SUNGLASSESCONTINUED".into(), 13_000));
+        // No dedicated dance animation exists in any free Bonzi payload
+        // (checked 4.3.2 cab, MSAgent .acs, surfing variant — the paid
+        // "dance to MIDI" content never shipped). So choreograph one from
+        // the original moves: jumps and crouches (whistle on every beat),
+        // giggles, bounces, waves — over the intro jingle, offline & free.
+        let seq = [
+            "MOVEUP", "MOVEDOWN", "GIGGLE", "MOVEUP", "PLEASEDHARD", "MOVEDOWN",
+            "WAVE", "GIGGLE", "MOVEUP", "PLEASEDHARD", "MOVEDOWN", "WINK", "GIGGLE",
+        ];
+        self.push(Action::DanceSeq(
+            seq.iter().map(|s| s.to_string()).collect(),
+        ));
         self.push(Action::Music("Intro2.wav".into()));
         self.push(Action::Speak("I just love to dance!".into()));
     }
@@ -283,6 +331,14 @@ impl Pet {
                     self.walk_dir = 0;
                     self.set_anim(&a, true);
                     self.loop_until = Some(now + Duration::from_millis(ms));
+                }
+                Action::DanceSeq(seq) => {
+                    self.walk_dir = 0;
+                    self.loop_until = None;
+                    self.dance_q = seq.into_iter().filter(|a| has_anim(a)).collect();
+                    if let Some(first) = self.dance_q.pop_front() {
+                        self.set_anim(&first, false);
+                    }
                 }
                 Action::Speak(t) => {
                     let d = 2.5 + t.len() as f64 * 0.05;
@@ -393,18 +449,27 @@ impl Pet {
             }
         }
 
+        // Chat reply priority: expire the lock, then stay silent while held.
+        if self.chat_lock.is_some_and(|u| now >= u) {
+            self.chat_lock = None;
+        }
+        let chat_locked = self.chat_lock.is_some();
+
         // Frame-carried voice clips: the original .acs stores a sound index
         // on specific frames (Bonzi says "Oh!" mid-HUG, whistles in idles…).
-        // Fire once per (anim, frame) entry.
+        // Fire once per (anim, frame) entry; `seen` still advances while
+        // chat-locked so clips never fire retroactively afterwards.
         if (self.anim.as_str(), self.frame) != (self.seen.0.as_str(), self.seen.1) {
             self.seen = (self.anim.clone(), self.frame);
-            if let Some(w) = audio_of(&self.anim, self.frame) {
-                self.pending.push(Effect::PlaySound(w));
+            if !chat_locked {
+                if let Some(w) = audio_of(&self.anim, self.frame) {
+                    self.pending.push(Effect::PlaySound(w));
+                }
             }
         }
 
-        // idle personality engine
-        if self.is_idle() && now >= self.next_idle {
+        // idle personality engine — silent while a chat reply owns the voice.
+        if !chat_locked && self.is_idle() && now >= self.next_idle {
             self.next_idle = now + Duration::from_secs(18 + rand::rng().random_range(0..30) as u64);
             let roll: u32 = rand::rng().random_range(0..100);
             match roll {
@@ -428,6 +493,16 @@ impl Pet {
         self.frame = 0;
         if self.looping {
             return;
+        }
+        // Choreographed dance: next move wins over the normal return.
+        if let Some(next) = self.dance_q.pop_front() {
+            self.set_anim(&next, false);
+            return;
+        }
+        if self.music_on {
+            // A dance sequence just ended: take the music off with it.
+            self.music_on = false;
+            self.pending.push(Effect::StopMusic);
         }
         if let Some(r) = ret {
             if !r.is_empty() && has_anim(r) {
@@ -547,6 +622,74 @@ mod tests {
         }
         assert_eq!(fired, vec!["audio_008.wav".to_string()], "clip fires exactly once");
         assert_eq!(stop_all, 1, "queued action cuts previous output once");
+    }
+
+    /// A chat reply owns the voice: queued gags are dropped, frame-carried
+    /// clips stay silent, and the reply bubble survives.
+    #[test]
+    fn chat_reply_owns_the_voice() {
+        let c = content();
+        let mut p = Pet::new();
+        p.pending.clear();
+        p.frame_dur = Duration::ZERO;
+        p.push(Action::Animate("HUG".into())); // would cut the reply off
+        p.chat_reply("the model's fine answer");
+        p.pending.clear(); // main dispatches the reply's own SpeakTts here
+        assert!(p.queue.is_empty(), "queued gag must be dropped");
+        assert_eq!(p.bubble.as_deref(), Some("the model's fine answer"));
+        let audio = |_a: &str, f: usize| -> Option<String> {
+            if f == 5 {
+                Some("audio_008.wav".into())
+            } else {
+                None
+            }
+        };
+        // Many frames past the clip's trigger frame: nothing may fire.
+        let mut noisy = Vec::new();
+        for _ in 0..40 {
+            let (_, e) = p.tick(|_| true, audio, &c);
+            noisy.extend(e.into_iter().filter(|e| {
+                matches!(e, Effect::PlaySound(_) | Effect::SpeakTts(_) | Effect::StopAll)
+            }));
+        }
+        assert!(noisy.is_empty(), "chat lock must silence automatic audio: {noisy:?}");
+        assert_eq!(p.bubble.as_deref(), Some("the model's fine answer"), "bubble intact");
+    }
+
+    #[test]
+    fn stage_directions_are_visual_only() {
+        let mut p = Pet::new();
+        p.pending.clear();
+        p.stage("WINK");
+        assert_eq!(p.anim, "WINK");
+        p.stage("WALK");
+        assert_ne!(p.walk_dir, 0);
+        assert!(p.pending.is_empty(), "stage must not queue audio effects");
+        p.stage("HIDE");
+        assert!(p.hidden);
+    }
+
+    /// The choreographed dance must chain every move and stop the music
+    /// when the last one finishes.
+    #[test]
+    fn dance_sequence_chains_and_stops_music() {
+        let c = content();
+        let mut p = Pet::new();
+        p.dance();
+        // Drain the three queued actions (DanceSeq, Music, Speak).
+        for _ in 0..3 {
+            p.tick(|_| true, |_, _| None, &c);
+        }
+        assert_eq!(p.anim, "MOVEUP", "first move starts");
+        assert!(p.music_on);
+        let n = p.dance_q.len();
+        // One finish per move: the last one (empty queue) ends the music.
+        for _ in 0..n + 1 {
+            p.anim_finished(|_| true, None);
+        }
+        assert_eq!(p.dance_q.len(), 0);
+        assert!(!p.music_on, "music stops with the last move");
+        assert!(p.pending.iter().any(|e| matches!(e, Effect::StopMusic)));
     }
 
     #[test]

@@ -99,10 +99,12 @@ string in the tree is the crate `scoped-tls` (thread-local storage, not TLS).
   triggered it in the original `.acs` (mail checks, banana misses, reading
   grunts…). One voice at a time: every new action cuts off whatever was
   playing before it, and a test asserts no voice sample is left unreachable.
-  **Dance!** loops `SUNGLASSESCONTINUED` — the actual dance from the
-  `.acs` (shades on, snapping) — over the original intro jingle (the 1999
-  "dance to MIDI" was a paid Bonzi Unlimited feature; here it's free and
-  offline).
+  **Dance!** choreographs a routine from original moves — jumps and
+  crouches (whistle on every beat), giggles, bounces, waves — over the
+  intro jingle. No dedicated dance animation exists in any free Bonzi
+  payload (verified across the 4.3.2 cab, the MSAgent `.acs`, and the
+  surfing variant: the "dance to MIDI" was paid Bonzi Unlimited content
+  that never shipped), so the routine is sequenced from the real moves.
 - `--test-audio` plays every bundled sound once, in sequence, and reports
   which output path (cpal device or `paplay`/`aplay`/`afplay`/`ffplay`)
   handled each one — the quickest way to confirm sound works on a new box.

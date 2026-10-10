@@ -606,19 +606,6 @@ impl App {
                         self.child = tts::speak(&t);
                     }
                 }
-                Effect::AgentReply(t) => {
-                    // Long model answers must not be truncated by the 14 s
-                    // bubble cap: show for the full reading time.
-                    let secs = (4.0 + t.chars().count() as f64 * 0.09).min(60.0);
-                    self.pet.bubble = Some(t.clone());
-                    self.pet.bubble_until =
-                        Some(Instant::now() + Duration::from_secs_f64(secs));
-                    self.pet.speaking = true;
-                    if self.opts.tts {
-                        self.stop_voice();
-                        self.child = tts::speak(&t);
-                    }
-                }
                 Effect::Quit => {
                     save_state(self.window.as_deref(), self.opts.scale);
                     el.exit();
@@ -1148,11 +1135,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             while let Ok(agent::Msg::Reply(r)) = app.agent_rx.try_recv() {
                 match r {
                     Ok(text) => {
-                        let mut fx = vec![pet::Effect::AgentReply(text)];
-                        if app.pet.is_idle() {
-                            app.pet.set_anim("EXPLAIN", false);
+                        // Model may steer the body with [anim:NAME]; the
+                        // marker is stripped before the text is spoken.
+                        let (text, stage) = agent::parse_stage(&text);
+                        let was_idle = app.pet.is_idle();
+                        app.pet.chat_reply(&text);
+                        match stage {
+                            Some(s) => app.pet.stage(&s),
+                            None if was_idle => app.pet.set_anim("EXPLAIN", false),
+                            _ => {}
                         }
-                        fx.append(&mut app.pet.pending);
+                        let fx = std::mem::take(&mut app.pet.pending);
                         app.dispatch_effects(fx, el);
                     }
                     Err(e) => app.pet.say(&format!("My brain went fuzzy: {e}"), 6.0),
