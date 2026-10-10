@@ -1,0 +1,49 @@
+ Copyright 1999, BONZI.COM Software. All Rights Reserved.
+ Copyright 1999-2001 - BONZI.COM Software. All Rights Reserved.
+,BONZI.COM ONLINE PRIVACY POLICY STATEMENT
+@im.bonziworld.com
+@im.bonziworld.com!
+A URL path to a picture image
+BONZI.COM Privacy Policy
+BONZI.COM be liable for any special, incidental or consequential damages that result from the use of the information or materials on our sites, even if BONZI.COM or an authorized representative of BONZI.COM, has been advised of the possibility of such damages. 
+BONZI.COM collects two types of information about users: personal information (such as name and e-mail address) and aggregate information (such as information about how many users log on to our sites on a daily basis). 
+BONZI.COM encourages parents and guardians to spend time with their children online, and to be familiar with the sites their children visit. At various places on our sites, we ask whether users are under the age of 18 or 13. BONZI.COM relies on our users to be truthful in responding to these questions. 
+BONZI.COM experience. Our sites do not use cookies to retrieve any
+BONZI.COM may share the personal and aggregate information we collect with our affiliates and other sites operated by or for BONZI.COM.
+BONZI.COM requests that children under the age of 18 not submit or post
+BONZI.COM reserves the right to change this Privacy Policy at any time. Any such changes will be posted online. Questions should be directed to
+BONZI.COM shares aggregate information with third parties for advertising and promotional purposes. With user permission, BONZI.COM accesses personal information on behalf of pre-screened third parties for marketing or promotional purposes. We will always request permission to share such information on our sites. You may elect not to participate by clicking the appropriate on-screen button. BONZI.COM may also share personal information with consultants and affiliates for internal business purposes and may divulge personal information if such information is subpoenaed, or if BONZI.COM believes that membership has been used to commit unlawful acts, or acts that may endanger the health or safety of another user or of the general public. In some situations, we will share your personal information, on a confidential basis, with third parties who perform a particular service on our behalf, such as sending e-mails. These parties are not allowed to use personal information except for the limited purpose of providing 
+BONZI.COM uses the personal information we collect to improve the content of our sites; to customize the content and/or layout of our sites for each individual user; to notify users about updates to our sites or promotional offers or opportunities that we believe will be of interest to users; and to investigate violations of our terms and conditions of use. 
+BONZI.COM's PRIVACY POLICY 
+Copyright 1999, BONZI.COM Software. All rights reserved.
+Enter a site or URL to travel to below:
+Enter or change the location (URL) of the file to add to the download list.  You can also enter a description for the file.
+File URL (Internet Address)
+Information Collected by BONZI.COM.
+MSWinsockLib
+MSWinsockLib.Winsock
+No transmission of data over the Internet is guaranteed to be completely secure. It may be possible for third parties not under the control of BONZI.COM to intercept or access transmissions or private communications unlawfully. While we strive to protect your personal information, BONZI.COM cannot ensure or warrant the security of any information you transmit to us. Any such transmission is done at your own risk. 
+Our sites contain links to sites other than our own. Those sites may not follow the same privacy policies as BONZI.COM. Such links may be to
+PstrURLWWx
+Sharing Data with BONZI.COM Affiliates
+URLLocation
+URLPicture
+Use of Information Collected by BONZI.COM
+When you register to use membership services, BONZI.COM may share your
+Winsock
+You may contact us via e-mail at support@bonzi.com.
+bstrAppURL
+information enables BONZI.COM to improve our sites to make your online visits more productive and enjoyable. 
+information from your computer. Most browsers are set to accept cookies. If you prefer, you may set your browser to refuse cookies or to alert you when cookies are being sent. However, some parts of our sites, such as the members-only areas (i.e. shopping, contest and game areas) will not function properly if you choose not to accept cookies. You may occasionally get cookies from our advertisers. BONZI.COM does not control these cookies, and they are not subject to BONZI.COM's 
+information to our sites. If an individual between the ages of 13 and 17 does so, BONZI.COM may collect information (including personally identifying information). This information may be used for marketing and promotional purposes by BONZI.COM and may, with the user's permission, be shared with pre-screened third parties. If a user or his/her parent or guardian changes his/her mind with respect to such use, that user, parent or guardian may stop that use either by e-mail request or by modifying his/her registration information online. 
+lblURL
+manufacturer or otherwise. Unless BONZI.COM has provided explicit authority, such references in no way indicate our endorsement, recommendation or preference. 
+messages online. BONZI.COM reserves the right to, but is not obligated to, refuse or delete any content that in our sole discretion is considered inappropriate. 
+operations of BONZI.COM, we gather certain types of information about BONZI.COM users. This Privacy Policy ("Privacy Policy") explains the types of information we gather, what we do with it and how you may correct or change information that BONZI.COM may collect. 
+strNewURL
+strURL
+strURLName
+style as a result of a co-branding agreement. These sites may send their own cookies to you, and may collect information and use it in a way inconsistent with BONZI.COM's privacy policy. BONZI.COM does not control the content that appears on these sites. Such sites may contain information that content providers independent of BONZI.COM have created, maintained, published, posted or otherwise made available. 
+support@bonzi.com.
+the particular service on our behalf. In addition, BONZI.COM receives personal usage and demographic information from third parties and uses this information to improve our products and services. Occasionally, we may post the name of a user (for example, a contest winner) on one of our sites. BONZI.COM will notify you of this possibility when you provide your information or, if possible, will notify you when the information is posted. BONZI.COM uses a third-party advertising company to serve ads when you visit our sites. This company may use information (not including your name, address, email address or telephone number) about your visits to our and other web sites in order to provide advertisements about goods and services of interest to you. In addition, we share web site usage information about visitors to our sites with such company for the purpose of managing and targeting advertisements on our sites. For this purpose, we and our third-party advertising company note some of the pages you visit on our si
+txtURL

@@ -1,0 +1,9 @@
+/target
+__pycache__/
+# raw installer artifacts: re-downloadable from archive.org (see README)
+analysis/*.exe
+analysis/*.cab
+analysis/*.zip
+analysis/collection/
+analysis/extracted/
+analysis/extracted2/

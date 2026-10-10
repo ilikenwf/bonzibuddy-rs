@@ -1,0 +1,441 @@
+//! bonzibuddy-rs — a safe, offline, cross-platform reimplementation of the
+//! 1999 BonziBuddy desktop companion, using the original MS Agent character
+//! data extracted from the archived installers.
+//!
+//! What the original did that this does NOT:
+//!   - phone home (im.bonziworld.com, daily content downloads)
+//!   - log your browsing history and search queries (Browse.nbd / Search.nbd)
+//!   - email modules (emsmtp/empop3) + referral spam
+//!   - "Bonzi's Download Manager" (fetch & run arbitrary payloads, IE hook)
+//!   - ad links (sites.nbd) and paid upsells (Bonzi Unlimited gating)
+//!
+//! This binary contains zero network code. All content is local.
+//!
+//! Phase 2 (planned): an OpenAPI-compatible agent client can push the same
+//! `pet::Action` values the offline engine uses — see src/pet.rs.
+
+mod assets;
+mod content;
+mod pet;
+mod render;
+mod tts;
+
+use ab_glyph::PxScale;
+use pet::{Action, Effect, Pet};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use winit::dpi::{LogicalSize, PhysicalPosition, Position};
+use winit::event::{ElementState, Event, KeyEvent, MouseButton, WindowEvent};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::keyboard::{Key, NamedKey};
+use winit::window::{Icon, Window, WindowAttributes, WindowLevel};
+
+const WIN_W: u32 = 340;
+const WIN_H: u32 = 460;
+
+struct Opts {
+    scale: f64,
+    matte: bool,
+    audio: bool,
+    tts: bool,
+}
+
+const ABOUT: &str = "BonziBuddy-rs v1.0\nA safe reimagining of the 1999 original.\nNo phone-home. No ads. No spyware.\n100% offline. Original character art.\nRight-click me for the menu!";
+
+struct MenuItem {
+    label: &'static str,
+    action: fn(&mut Pet, &content::Content),
+}
+
+const MENU: &[MenuItem] = &[
+    MenuItem { label: "Tell me a joke", action: |p, c| p.tell_joke(c) },
+    MenuItem { label: "Fun fact", action: |p, c| p.tell_fact(c) },
+    MenuItem { label: "Sing a song", action: |p, c| p.sing(c) },
+    MenuItem { label: "Do a trick", action: |p, _c| p.trick() },
+    MenuItem { label: "Dance!", action: |p, _c| p.dance() },
+    MenuItem { label: "Take a walk", action: |p, _c| p.start_walk() },
+    MenuItem { label: "Hide", action: |p, _c| p.hide() },
+    MenuItem { label: "About", action: |p, _c| p.say(ABOUT, 12.0) },
+    MenuItem { label: "Quit", action: |p, _c| p.push(Action::Quit) },
+];
+
+type SBuf = (
+    softbuffer::Context<Arc<Window>>,
+    softbuffer::Surface<Arc<Window>, Arc<Window>>,
+);
+
+struct App {
+    assets: assets::Assets,
+    content: content::Content,
+    pet: Pet,
+    opts: Opts,
+    sbuf: Option<SBuf>,
+    window: Option<Arc<Window>>,
+    size: (u32, u32),
+    #[cfg(feature = "audio")]
+    audio: Option<(rodio::OutputStream, rodio::OutputStreamHandle)>,
+    #[cfg(feature = "audio")]
+    sinks: Vec<rodio::Sink>,
+    mouse: (f64, f64),
+    press: Option<((f64, f64), (i32, i32))>,
+    dragging: bool,
+    menu_rects: Vec<(usize, (i32, i32, i32, i32))>,
+    sprite_rect: (i32, i32, i32, i32),
+    startup_done: bool,
+}
+
+impl App {
+    #[cfg(feature = "audio")]
+    fn play_sound(&mut self, name: &str) {
+        if !self.opts.audio {
+            return;
+        }
+        let Some(bytes) = self.assets.sound(name) else { return };
+        let Some((_s, handle)) = &self.audio else { return };
+        if let Ok(sink) = rodio::Sink::try_new(handle) {
+            if let Ok(src) = rodio::Decoder::new(std::io::Cursor::new(bytes.to_vec())) {
+                sink.append(src);
+                self.sinks.retain(|s| !s.empty());
+                self.sinks.push(sink);
+            }
+        }
+    }
+
+    #[cfg(not(feature = "audio"))]
+    fn play_sound(&mut self, _name: &str) {}
+
+    fn dispatch_effects(&mut self, effects: Vec<Effect>, el: &ActiveEventLoop) {
+        for e in effects {
+            match e {
+                Effect::PlaySound(name) => self.play_sound(&name),
+                Effect::SpeakTts(t) => {
+                    if self.opts.tts {
+                        tts::speak(&t);
+                    }
+                }
+                Effect::Quit => el.exit(),
+            }
+        }
+    }
+
+    fn click(&mut self, x: f64, y: f64) {
+        if self.pet.menu_open {
+            for (i, (mx, my, mw, mh)) in self.menu_rects.clone() {
+                if x >= mx as f64 && x < (mx + mw) as f64 && y >= my as f64 && y < (my + mh) as f64 {
+                    self.pet.menu_open = false;
+                    (MENU[i].action)(&mut self.pet, &self.content);
+                    return;
+                }
+            }
+            self.pet.menu_open = false;
+            return;
+        }
+        let (sx, sy, sw, sh) = self.sprite_rect;
+        if x >= sx as f64 && x < (sx + sw) as f64 && y >= sy as f64 && y < (sy + sh) as f64 {
+            self.pet.click(&self.content);
+        }
+    }
+
+    fn render(&mut self) {
+        let Some(window) = &self.window else { return };
+        let Some((_ctx, surface)) = &mut self.sbuf else { return };
+        let (w, h) = self.size;
+        let mut canvas = Canvas::new(w, h);
+        if self.opts.matte {
+            canvas.clear([0x00, 0x80, 0x80, 255]); // classic Win95 teal
+        } else {
+            canvas.clear([0, 0, 0, 0]);
+        }
+
+        let sf = window.scale_factor();
+        let s = self.opts.scale * sf;
+        let cw = (self.assets.char_w as f64 * s) as i32;
+        let chh = (self.assets.char_h as f64 * s) as i32;
+        let sx = ((w as i32) - cw) / 2;
+        let sy = (h as i32) - chh;
+        self.sprite_rect = (sx, sy, cw, chh);
+
+        let scale = PxScale { x: (15.0 * s).max(11.0) as f32, y: (15.0 * s).max(11.0) as f32 };
+        let lh = render::line_height(&self.assets.font, scale);
+        self.menu_rects.clear();
+        if self.pet.menu_open {
+            let bw = (190.0 * s) as i32;
+            let bh = (26.0 * s) as i32;
+            let bx = ((w as i32) - bw) / 2;
+            let mut by = 6;
+            for (i, item) in MENU.iter().enumerate() {
+                canvas.round_rect(bx, by, bw, bh, 6, [0xF0, 0xF0, 0xE0, 255], [0, 0, 0, 255]);
+                render::draw_line(&mut canvas, &self.assets.font, item.label, bx as f32 + (8.0 * s) as f32, by as f32 + bh as f32 * 0.68, scale, [0, 0, 0, 255]);
+                self.menu_rects.push((i, (bx, by, bw, bh)));
+                by += bh + 2;
+            }
+        } else if let Some(bubble) = self.pet.bubble.clone() {
+            let max_w = (w as f32) - (24.0 * s) as f32;
+            let lines = render::wrap(&self.assets.font, &bubble, max_w, scale);
+            let th = lines.len() as f32 * lh;
+            let bw = (w as i32) - 16;
+            let bh = (th + (16.0 * s) as f32) as i32;
+            let bx = 8;
+            let by = (sy as f32 - bh as f32 - 6.0).max(4.0) as i32;
+            canvas.round_rect(bx, by, bw, bh, 10, [0xFF, 0xFF, 0xCC, 255], [0, 0, 0, 255]);
+            let mut ty = by as f32 + lh;
+            for line in &lines {
+                render::draw_line(&mut canvas, &self.assets.font, line, bx as f32 + (10.0 * s) as f32, ty, scale, [0, 0, 0, 255]);
+                ty += lh;
+            }
+        }
+
+        if let Some(frames) = self.assets.frames(&self.pet.anim) {
+            if !frames.is_empty() {
+                let idx = self.pet.frame % frames.len();
+                let mouth_frame = if self.pet.speaking && self.pet.mouth > 0 {
+                    self.assets.mouth_frame(&self.pet.anim, idx, self.pet.mouth)
+                } else {
+                    None
+                };
+                match &mouth_frame {
+                    Some(f) => canvas.blit(f, sx, sy, s),
+                    None => canvas.blit(&frames[idx], sx, sy, s),
+                }
+            }
+        }
+
+        let pixels = canvas.to_u32();
+        let Ok(mut buf) = surface.buffer_mut() else { return };
+        for (o, p) in buf.iter_mut().zip(pixels) {
+            *o = p;
+        }
+        let _ = buf.present();
+    }
+}
+
+use render::Canvas;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut opts = Opts { scale: 1.0, matte: std::env::var("BONZI_MATTE").is_ok(), audio: true, tts: false };
+    let args: Vec<String> = std::env::args().collect();
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--scale" => { opts.scale = args.get(i + 1).and_then(|v| v.parse::<f64>().ok()).unwrap_or(1.0).clamp(0.5, 4.0); i += 1; }
+            "--matte" => opts.matte = true,
+            "--no-audio" => opts.audio = false,
+            "--tts" => opts.tts = true,
+            "--assets" => { if let Some(p) = args.get(i + 1) { std::env::set_var("BONZI_ASSETS", p); } i += 1; }
+            "-h" | "--help" => {
+                println!("bonzibuddy-rs — safe offline BonziBuddy. Flags: --scale N --matte --no-audio --tts --assets PATH");
+                return Ok(());
+            }
+            _ => {}
+        }
+        i += 1;
+    }
+
+    let assets = assets::Assets::load().map_err(|e| format!("failed to load assets: {e}"))?;
+    let content = content::Content::load(&assets.root().join("content/nbd_decoded.json"))
+        .unwrap_or_else(|e| {
+            eprintln!("content: {e} — using empty pools");
+            content::Content {
+                jokes: vec![],
+                facts: vec![],
+                songs: vec![],
+                greetings: vec!["Hi! I'm Bonzi!".into()],
+                petting: vec!["Hehe!".into()],
+            }
+        });
+    #[cfg(feature = "audio")]
+    let audio = if opts.audio { rodio::OutputStream::try_default().ok() } else { None };
+    #[cfg(feature = "audio")]
+    if audio.is_none() && opts.audio {
+        eprintln!("note: no audio device; running silent");
+    }
+
+    let mut app = App {
+        assets,
+        content,
+        pet: Pet::new(),
+        opts,
+        window: None,
+        sbuf: None,
+        size: (WIN_W, WIN_H),
+        #[cfg(feature = "audio")]
+        audio,
+        #[cfg(feature = "audio")]
+        sinks: Vec::new(),
+        mouse: (0.0, 0.0),
+        press: None,
+        dragging: false,
+        menu_rects: Vec::new(),
+        sprite_rect: (0, 0, 0, 0),
+        startup_done: false,
+    };
+
+    let el = EventLoop::new()?;
+    el.set_control_flow(ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(16)));
+    // run_app migration is a pure rename of this closure into an ApplicationHandler impl;
+    // EventLoop::run is still fully supported in winit 0.30.
+    #[allow(deprecated)]
+    el.run(move |event, el| match event {
+        Event::Resumed if app.window.is_none() => {
+            #[cfg_attr(not(windows), allow(unused_mut))]
+            let mut attrs = WindowAttributes::default()
+                .with_title("BonziBuddy")
+                .with_decorations(false)
+                .with_transparent(!app.opts.matte)
+                .with_resizable(false)
+                .with_inner_size(LogicalSize::new(WIN_W, WIN_H));
+            #[cfg(windows)]
+            {
+                use winit::platform::windows::WindowAttributesExtWindows;
+                attrs = attrs.with_skip_taskbar(true);
+            }
+            let Ok(window) = el.create_window(attrs) else {
+                eprintln!("could not create window");
+                el.exit();
+                return;
+            };
+            window.set_window_level(WindowLevel::AlwaysOnTop);
+            let (ax, ay, aw, ah) = window
+                .current_monitor()
+                .or_else(|| window.primary_monitor())
+                .map(|m| {
+                    let s = m.size();
+                    let o = m.position();
+                    (o.x, o.y, s.width as i32, s.height as i32)
+                })
+                .unwrap_or((0, 0, 1920, 1080));
+            window.set_outer_position(Position::Physical(PhysicalPosition::new(
+                ax + aw - WIN_W as i32 - 40,
+                ay + ah - WIN_H as i32 - 20,
+            )));
+            let window = Arc::new(window);
+            if let Ok(ico) = image::open(app.assets.root().join("favicon.ico")) {
+                let img = ico.to_rgba8();
+                let (iw, ih) = img.dimensions();
+                let _ = window.set_window_icon(Icon::from_rgba(img.into_raw(), iw, ih).ok());
+            }
+            let size = window.inner_size();
+            let ctx = softbuffer::Context::new(window.clone()).ok();
+            let surf = ctx.as_ref().and_then(|c| softbuffer::Surface::new(c, window.clone()).ok());
+            if let (Some(c), Some(mut surf)) = (ctx, surf) {
+                let _ = surf.resize(size.width.max(1).try_into().unwrap(), size.height.max(1).try_into().unwrap());
+                app.size = (size.width.max(1), size.height.max(1));
+                app.sbuf = Some((c, surf));
+            }
+            app.window = Some(window);
+            if !app.startup_done {
+                app.startup_done = true;
+                app.pet.startup(&app.content);
+            }
+        }
+        Event::WindowEvent { event, .. } => match event {
+            WindowEvent::Resized(size) => {
+                if let Some((_c, s)) = &mut app.sbuf {
+                    let _ = s.resize(size.width.max(1).try_into().unwrap(), size.height.max(1).try_into().unwrap());
+                }
+                app.size = (size.width.max(1), size.height.max(1));
+            }
+            WindowEvent::ScaleFactorChanged { .. } => {
+                if let Some(window) = &app.window {
+                    let size = window.inner_size();
+                    if let Some((_c, s)) = &mut app.sbuf {
+                        let _ = s.resize(size.width.max(1).try_into().unwrap(), size.height.max(1).try_into().unwrap());
+                    }
+                    app.size = (size.width.max(1), size.height.max(1));
+                }
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                app.mouse = (position.x, position.y);
+                if let (Some(((pmx, pmy), (wpx, wpy))), Some(window)) = (&app.press, &app.window) {
+                    let dx = position.x - pmx;
+                    let dy = position.y - pmy;
+                    if dx.abs() + dy.abs() > 6.0 {
+                        app.dragging = true;
+                        window.set_outer_position(Position::Physical(PhysicalPosition::new(
+                            (*wpx as f64 + dx) as i32,
+                            (*wpy as f64 + dy) as i32,
+                        )));
+                    }
+                }
+            }
+            WindowEvent::MouseInput { state, button, .. } => match (state, button) {
+                (ElementState::Pressed, MouseButton::Left) => {
+                    if let Some(window) = &app.window {
+                        let pos = window.outer_position().unwrap_or(PhysicalPosition::new(0, 0));
+                        app.press = Some((app.mouse, (pos.x, pos.y)));
+                        app.dragging = false;
+                    }
+                }
+                (ElementState::Released, MouseButton::Left) => {
+                    if app.press.take().is_some() && !app.dragging {
+                        app.click(app.mouse.0, app.mouse.1);
+                    }
+                    app.dragging = false;
+                }
+                (ElementState::Pressed, MouseButton::Right) => {
+                    app.pet.menu_open = !app.pet.menu_open;
+                }
+                _ => {}
+            },
+            WindowEvent::KeyboardInput {
+                event: KeyEvent { logical_key: Key::Named(NamedKey::Escape), state: ElementState::Pressed, .. },
+                ..
+            } => {
+                app.pet.menu_open = false;
+            }
+            WindowEvent::CloseRequested => el.exit(),
+            WindowEvent::RedrawRequested => {
+                if app.window.is_some() {
+                    let effects = {
+                        let App { pet, assets, content, window, size, .. } = &mut app;
+                        let (dx, effects) = pet.tick(|a| assets.has(a), content);
+                        if dx != 0 {
+                            if let Some(window) = window {
+                                let (ax, aw) = window
+                                    .primary_monitor()
+                                    .map(|m| (m.position().x, m.size().width as i32))
+                                    .unwrap_or((0, 1920));
+                                let mut pos = window.outer_position().unwrap_or(PhysicalPosition::new(0, 0));
+                                pos.x += (dx as f64 * window.scale_factor()) as i32;
+                                if pos.x < ax {
+                                    pos.x = ax;
+                                    pet.walk_dir = 1;
+                                    pet.set_anim("MOVERIGHT", true);
+                                } else if pos.x > ax + aw - size.0 as i32 {
+                                    pos.x = ax + aw - size.0 as i32;
+                                    pet.walk_dir = -1;
+                                    pet.set_anim("MOVELEFT", true);
+                                }
+                                window.set_outer_position(Position::Physical(pos));
+                            }
+                        }
+                        if let Some(frames) = assets.frames(&pet.anim) {
+                            if frames.is_empty() {
+                                pet.anim = "IDLE1_1".into();
+                            } else {
+                                if pet.frame >= frames.len() {
+                                    let ret = assets.return_anim(&pet.anim).map(|s| s.to_string());
+                                    pet.anim_finished(|a| assets.has(a), ret.as_deref());
+                                }
+                                let idx = pet.frame.min(frames.len() - 1);
+                                pet.frame_dur = Duration::from_millis(assets.frame_duration(&pet.anim, idx));
+                            }
+                        }
+                        effects
+                    };
+                    app.dispatch_effects(effects, el);
+                    app.render();
+                }
+            }
+            _ => {}
+        },
+        Event::AboutToWait => {
+            if let Some(w) = &app.window {
+                w.request_redraw();
+            }
+            el.set_control_flow(ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(16)));
+        }
+        _ => {}
+    })?;
+    Ok(())
+}

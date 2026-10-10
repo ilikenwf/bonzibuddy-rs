@@ -1,0 +1,26 @@
+[package]
+name = "bonzibuddy-rs"
+version = "1.0.0"
+edition = "2021"
+description = "A safe, offline, cross-platform reimplementation of the 1999 BonziBuddy desktop companion. Zero network code."
+license = "MIT"
+
+[dependencies]
+winit = "0.30"
+softbuffer = "0.4"
+image = { version = "0.25", default-features = false, features = ["png", "ico"] }
+rodio = { version = "0.20", default-features = false, features = ["wav"], optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+rand = "0.9"
+ab_glyph = "0.2"
+
+[features]
+default = ["audio"]
+# Wav sound effects via rodio/cpal. Disable for headless builds or when
+# cross-checking aarch64-apple-darwin from Linux (coreaudio-sys needs the
+# macOS SDK at build time; native macOS builds keep audio on).
+audio = ["dep:rodio"]
+
+[profile.release]
+opt-level = 2
