@@ -19,8 +19,13 @@ pub struct Content {
 }
 
 /// Strip Bonzi TTS markup to plain text.
-/// `<sp=TEXT>` keeps TEXT (the utterance); `<pl=..>`/`<chr=..>` cues are dropped;
-/// `\pau=2000\`, `\emp\`, `\spd=..\` control sequences collapse to a space.
+/// `<sp=TEXT>` keeps TEXT (the utterance); other `<tag..>` cues are dropped.
+/// Backslashes are FIELD DELIMITERS, not paired quotes — the original data
+/// contains odd backslash counts, so any pair-based parse desynchronizes and
+/// leaks `spd=`/`pit=` noise into speech bubbles. A delimited field is dropped
+/// when it is a control (`pau=1500`, `spd=120`, `map=".."=".."`), the `emp`
+/// marker, or whitespace; anything else is a pronunciation/emphasis word
+/// (`\the\`, `\long\`) and is kept as text.
 pub fn clean_tts(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut it = s.chars().peekable();
@@ -52,13 +57,30 @@ pub fn clean_tts(s: &str) -> String {
                 }
             }
             '\\' => {
+                let mut field = String::new();
                 while let Some(&c2) = it.peek() {
-                    it.next();
                     if c2 == '\\' {
                         break;
                     }
+                    if c2 == '>' && in_sp {
+                        break;
+                    }
+                    field.push(c2);
+                    it.next();
                 }
-                out.push(' ');
+                // map="X"="Y" and friends: cut at the first quote.
+                if let Some(q) = field.find('"') {
+                    field.truncate(q);
+                }
+                let t = field.trim();
+                let keep = !t.is_empty() && !field.contains('=') && t != "emp";
+                if keep {
+                    out.push(' ');
+                    out.push_str(t);
+                    out.push(' ');
+                } else {
+                    out.push(' ');
+                }
             }
             _ => out.push(c),
         }
@@ -75,6 +97,32 @@ pub fn clean_tts(s: &str) -> String {
     res
 }
 
+/// Name Bonzi uses for `[username]` placeholders in the original scripts.
+/// Priority: `--name` flag (exported to `BONZI_NAME` by main), then the login
+/// account name (title-cased), then "Friend".
+pub fn user_name() -> String {
+    if let Some(n) = std::env::var("BONZI_NAME").ok().filter(|s| !s.trim().is_empty()) {
+        return n.trim().to_string();
+    }
+    #[cfg(unix)]
+    let login = std::env::var("USER").ok();
+    #[cfg(windows)]
+    let login = std::env::var("USERNAME").ok();
+    #[cfg(not(any(unix, windows)))]
+    let login: Option<String> = None;
+    login
+        .filter(|s| !s.trim().is_empty() && s != "root")
+        .map(|s| {
+            let s = s.trim();
+            let mut c = s.chars();
+            match c.next() {
+                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+                None => String::new(),
+            }
+        })
+        .unwrap_or_else(|| "Friend".into())
+}
+
 impl Content {
     pub fn load(path: &std::path::Path) -> Result<Content, String> {
         let raw: Value = serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
@@ -85,7 +133,12 @@ impl Content {
                 if let Some(arr) = raw.get(*n).and_then(|x| x.as_array()) {
                     for item in arr {
                         if let Some(s) = item.as_str() {
-                            let c = clean_tts(s);
+                            // Entries may carry a literal "Header" marker prefix.
+                            let s = s.strip_prefix("Header").unwrap_or(s);
+                            let mut c = clean_tts(s);
+                            if c.contains("[username]") {
+                                c = c.replace("[username]", &user_name());
+                            }
                             if c.len() > 8 && !c.contains("Header") { v.push(c); }
                         }
                     }
@@ -103,7 +156,7 @@ impl Content {
             "Did you know I remember everything you tell me? Just kidding. Or am I?".into(),
             "Let's have some fun!".into(),
         ];
-        let petting = vec![
+        let mut petting = vec![
             "Hehehe, that tickles!".into(),
             "I like you. You're fun to be around!".into(),
             "Do I have bananas on my breath?".into(),
@@ -111,6 +164,8 @@ impl Content {
             "You are my favorite human!".into(),
             "Ooh, that's the good spot.".into(),
         ];
+        // p001.nbd is the original petting/personality script (uses [username]).
+        petting.extend(grab(&["p001.nbd"]));
         Ok(Content { jokes, facts, songs, greetings, petting })
     }
 }
@@ -135,9 +190,21 @@ mod tests {
 
     #[test]
     fn no_markup_leaks() {
-        for text in content().jokes.iter().chain(content().facts.iter()).take(500) {
+        let c = content();
+        let all = c
+            .jokes
+            .iter()
+            .chain(c.facts.iter())
+            .chain(c.songs.iter())
+            .chain(c.greetings.iter())
+            .chain(c.petting.iter());
+        for text in all {
             assert!(!text.contains('<') && !text.contains('\\'), "markup in: {text:?}");
             assert!(!text.contains("Header"), "header in: {text:?}");
+            assert!(
+                !text.contains("spd=") && !text.contains("pit=") && !text.contains("pau=") && !text.contains("map="),
+                "tts control leaked: {text:?}"
+            );
             assert!(!text.trim().is_empty());
         }
     }
@@ -154,4 +221,27 @@ mod tests {
             "The word set has many meanings"
         );
     }
+
+    #[test]
+    fn username_substituted() {
+        std::env::set_var("BONZI_NAME", "Zoe");
+        let c = content();
+        let with = c
+            .petting
+            .iter()
+            .chain(c.greetings.iter())
+            .find(|s| s.contains("Zoe"));
+        assert!(with.is_some(), "no line addressed to Zoe");
+        let all = c
+            .jokes
+            .iter()
+            .chain(c.facts.iter())
+            .chain(c.songs.iter())
+            .chain(c.greetings.iter())
+            .chain(c.petting.iter());
+        for text in all {
+            assert!(!text.contains("[username]"), "placeholder left in: {text:?}");
+        }
+    }
 }
+

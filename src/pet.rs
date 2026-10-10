@@ -125,6 +125,10 @@ impl Pet {
         self.bubble = Some(text);
         self.bubble_until = Some(Instant::now() + Duration::from_secs_f64(secs));
         self.speaking = true;
+        // Every bubble is speech: TTS (when enabled) must voice all of them,
+        // not just the Action::Speak path.
+        self.pending
+            .push(Effect::SpeakTts(self.bubble.clone().unwrap_or_default()));
     }
 
     pub fn say(&mut self, text: &str, secs: f64) {
@@ -198,6 +202,13 @@ impl Pet {
         self.hide_until = Some(Instant::now() + Duration::from_secs(8));
     }
 
+    /// Tray "Show": cancel the hidden state and play the reveal animation.
+    pub fn reveal(&mut self) {
+        self.hidden = false;
+        self.hide_until = None;
+        self.set_anim("HIDESHOW", false);
+    }
+
     /// Advance animation/bubble/personality clocks.
     /// Returns (window_dx_from_walk, effects).
     pub fn tick(&mut self, has_anim: impl Fn(&str) -> bool, content: &Content) -> (i32, Vec<Effect>) {
@@ -216,7 +227,6 @@ impl Pet {
                 Action::Speak(t) => {
                     let d = 2.5 + t.len() as f64 * 0.05;
                     self.bubble_now(t, d);
-                    self.pending.push(Effect::SpeakTts(self.bubble.clone().unwrap_or_default()));
                 }
                 Action::Tell(anim, t) => {
                     if has_anim(&anim) { self.set_anim(&anim, false); }
@@ -360,3 +370,34 @@ fn return_of(anim: &str) -> String {
     String::new()
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::content::Content;
+
+    fn content() -> Content {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("assets/content/nbd_decoded.json");
+        Content::load(&path).expect("content loads")
+    }
+
+    #[test]
+    fn every_bubble_voices_exactly_once() {
+        let c = content();
+        let mut p = Pet::new();
+        p.pending.clear();
+        p.tell_joke(&c);
+        // drain the queue like the main loop does; tick() returns the effects
+        let mut seen = Vec::new();
+        while !p.queue.is_empty() {
+            let (_, effects) = p.tick(|_| true, &c);
+            seen.extend(effects.into_iter().filter(|e| matches!(e, Effect::SpeakTts(_))));
+        }
+        assert_eq!(seen.len(), 1, "joke must voice exactly once");
+        match &seen[0] {
+            Effect::SpeakTts(t) => assert!(!t.is_empty() && !t.contains("spd="), "bad tts text: {t:?}"),
+            _ => unreachable!(),
+        }
+    }
+}

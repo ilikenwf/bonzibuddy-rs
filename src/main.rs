@@ -45,29 +45,60 @@ struct Opts {
 #[serde(default)]
 struct Config {
     scale: f64,
+    /// Physical window position; restored at startup when on-screen.
+    x: Option<i32>,
+    y: Option<i32>,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { scale: 1.0 }
+        Config { scale: 1.0, x: None, y: None }
+    }
+}
+
+/// A scale of 0 (or a corrupt value) would pin the buddy at the minimum
+/// forever: the wheel can only multiply, and 0 × anything stays 0.
+fn sanitize_scale(cfg: &mut Config) {
+    if !(cfg.scale.is_finite() && (0.5..=4.0).contains(&cfg.scale)) {
+        cfg.scale = 1.0;
+    }
+}
+
+/// The wheel only multiplies, so a 0 (or corrupt) live scale can never move.
+/// Treat such a value as 1.0 so scrolling always has an effect.
+fn live_scale(scale: f64) -> f64 {
+    if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
     }
 }
 
 fn config_path() -> Option<std::path::PathBuf> {
     let dir = std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|s| !s.is_empty())
         .map(std::path::PathBuf::from)
         .or_else(|| {
             let key = if cfg!(windows) { "APPDATA" } else { "HOME" };
-            std::env::var_os(key).map(std::path::PathBuf::from)
+            std::env::var_os(key).map(|h| {
+                let mut p = std::path::PathBuf::from(h);
+                // APPDATA is already the config dir; HOME needs .config appended.
+                if !cfg!(windows) {
+                    p.push(".config");
+                }
+                p
+            })
         })?;
     Some(dir.join("bonzibuddy-rs.json"))
 }
 
 fn load_config() -> Config {
-    config_path()
+    let mut cfg: Config = config_path()
         .and_then(|p| std::fs::read(p).ok())
         .and_then(|b| serde_json::from_slice(&b).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    sanitize_scale(&mut cfg);
+    cfg
 }
 
 fn save_config(cfg: &Config) {
@@ -78,6 +109,53 @@ fn save_config(cfg: &Config) {
         if let Ok(b) = serde_json::to_vec_pretty(cfg) {
             let _ = std::fs::write(p, b);
         }
+    }
+}
+
+/// Persist scale + current window position together.
+fn save_state(window: Option<&Window>, scale: f64) {
+    let pos = window.and_then(|w| w.outer_position().ok());
+    save_config(&Config { scale: scale.clamp(0.5, 4.0), x: pos.map(|p| p.x), y: pos.map(|p| p.y) });
+}
+
+/// System tray icon: left-click toggles visibility; the menu has
+/// "Show / Hide" and "Quit". On Linux this needs libappindicator at runtime;
+/// returns `None` when the desktop offers no tray (Hide then auto-returns).
+fn make_tray(assets: &assets::Assets) -> Option<tray_icon::TrayIcon> {
+    use tray_icon::menu::{Menu, MenuItem};
+    use tray_icon::TrayIconBuilder;
+    #[cfg(target_os = "linux")]
+    {
+        // muda/tray-icon use GTK on Linux and never initialize it themselves.
+        if gtk::init().is_err() {
+            return None;
+        }
+    }
+    let img = image::open(assets.root().join("favicon.ico")).ok()?.to_rgba8();
+    let img = image::imageops::resize(&img, 32, 32, image::imageops::FilterType::Lanczos3);
+    let (tw, th) = (img.width(), img.height());
+    let icon = tray_icon::Icon::from_rgba(img.into_raw(), tw, th).ok()?;
+    let menu = Menu::new();
+    let toggle = MenuItem::with_id("toggle", "Show / Hide", true, None);
+    let quit = MenuItem::with_id("quit", "Quit", true, None);
+    menu.append_items(&[&toggle, &quit]).ok()?;
+    TrayIconBuilder::new()
+        .with_menu(Box::new(menu))
+        .with_menu_on_left_click(false)
+        .with_tooltip("BonziBuddy")
+        .with_icon(icon)
+        .build()
+        .ok()
+}
+
+fn toggle_visibility(app: &mut App) {
+    let Some(w) = &app.window else { return };
+    if w.is_visible().unwrap_or(true) {
+        w.set_visible(false);
+    } else {
+        w.set_visible(true);
+        app.pet.reveal();
+        w.request_redraw();
     }
 }
 
@@ -107,17 +185,29 @@ impl Drop for QuietStderr {
     }
 }
 
-/// Open an output stream: default device first, then every enumerated device
-/// (covers JACK/PipeWire/ALSA ordering quirks where the "default" is busy).
+/// Open an output stream. Tries the platform default, then every host in
+/// `cpal::ALL_HOSTS` (JACK before ALSA when built with the `jack` feature) and
+/// every device of each host. On jack/PipeWire desktops the ALSA "default" is
+/// often busy (dmix) while the JACK host connects cleanly — the old code only
+/// probed the default host and silently ran silent.
 #[cfg(feature = "audio")]
 fn open_audio() -> Option<(rodio::OutputStream, rodio::OutputStreamHandle)> {
     #[cfg(unix)]
     let _quiet = QuietStderr::new();
+    use cpal::traits::HostTrait;
     if let Ok(x) = rodio::OutputStream::try_default() {
         return Some(x);
     }
-    use cpal::traits::HostTrait;
-    if let Ok(devs) = cpal::default_host().devices() {
+    for id in cpal::platform::ALL_HOSTS {
+        let Ok(host) = cpal::platform::host_from_id(*id) else {
+            continue;
+        };
+        if let Some(dev) = host.default_output_device() {
+            if let Ok(x) = rodio::OutputStream::try_from_device(&dev) {
+                return Some(x);
+            }
+        }
+        let Ok(devs) = host.devices() else { continue };
         for d in devs {
             if let Ok(x) = rodio::OutputStream::try_from_device(&d) {
                 return Some(x);
@@ -163,6 +253,10 @@ struct App {
     menu_rects: Vec<(usize, (i32, i32, i32, i32))>,
     sprite_rect: (i32, i32, i32, i32),
     startup_done: bool,
+    tray: Option<tray_icon::TrayIcon>,
+    /// When set (tray active), the window hides once this deadline passes,
+    /// after the HIDE animation has played.
+    hide_at: Option<Instant>,
 }
 
 impl App {
@@ -194,7 +288,10 @@ impl App {
                         tts::speak(&t);
                     }
                 }
-                Effect::Quit => el.exit(),
+                Effect::Quit => {
+                    save_state(self.window.as_deref(), self.opts.scale);
+                    el.exit();
+                }
             }
         }
     }
@@ -205,6 +302,11 @@ impl App {
                 if x >= mx as f64 && x < (mx + mw) as f64 && y >= my as f64 && y < (my + mh) as f64 {
                     self.pet.menu_open = false;
                     (MENU[i].action)(&mut self.pet, &self.content);
+                    // With a tray, "Hide" minimizes to it after the HIDE
+                    // animation; without one the pet auto-returns in 8 s.
+                    if MENU[i].label == "Hide" && self.tray.is_some() {
+                        self.hide_at = Some(Instant::now() + Duration::from_millis(1400));
+                    }
                     return;
                 }
             }
@@ -297,7 +399,9 @@ impl App {
 use render::Canvas;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut opts = Opts { scale: load_config().scale, matte: std::env::var("BONZI_MATTE").is_ok(), audio: true, tts: false };
+    let cfg = load_config();
+    let saved_pos = (cfg.x, cfg.y);
+    let mut opts = Opts { scale: cfg.scale, matte: std::env::var("BONZI_MATTE").is_ok(), audio: true, tts: false };
     let args: Vec<String> = std::env::args().collect();
     let mut i = 1;
     while i < args.len() {
@@ -307,8 +411,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--no-audio" => opts.audio = false,
             "--tts" => opts.tts = true,
             "--assets" => { if let Some(p) = args.get(i + 1) { std::env::set_var("BONZI_ASSETS", p); } i += 1; }
+            "--name" => {
+                if let Some(n) = args.get(i + 1).filter(|v| !v.trim().is_empty()) {
+                    std::env::set_var("BONZI_NAME", n);
+                }
+                i += 1;
+            }
             "-h" | "--help" => {
-                println!("bonzibuddy-rs — safe offline BonziBuddy. Flags: --scale N --matte --no-audio --tts --assets PATH\nScroll wheel over the window resizes the buddy (persisted).");
+                println!("bonzibuddy-rs — safe offline BonziBuddy. Flags: --scale N --name NAME --matte --no-audio --tts --assets PATH\nScroll wheel over the window resizes the buddy; position, size and zoom are persisted.\nTray icon: left-click toggles visibility; menu has Show / Hide and Quit.");
                 return Ok(());
             }
             _ => {}
@@ -353,6 +463,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         menu_rects: Vec::new(),
         sprite_rect: (0, 0, 0, 0),
         startup_done: false,
+        tray: None,
+        hide_at: None,
     };
 
     let el = EventLoop::new()?;
@@ -392,15 +504,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let sf0 = window.scale_factor();
             let ww = (WIN_W as f64 * app.opts.scale * sf0) as i32;
             let wh = (WIN_H as f64 * app.opts.scale * sf0) as i32;
-            window.set_outer_position(Position::Physical(PhysicalPosition::new(
-                ax + aw - ww - 40,
-                ay + ah - wh - 20,
-            )));
+            // Restore the saved position when it is still on-screen.
+            let pos = match saved_pos {
+                (Some(x), Some(y)) if x >= ax - ww && x <= ax + aw && y >= ay && y <= ay + ah => {
+                    (x, y)
+                }
+                _ => (ax + aw - ww - 40, ay + ah - wh - 20),
+            };
+            window.set_outer_position(Position::Physical(PhysicalPosition::new(pos.0, pos.1)));
             let window = Arc::new(window);
             if let Ok(ico) = image::open(app.assets.root().join("favicon.ico")) {
                 let img = ico.to_rgba8();
                 let (iw, ih) = img.dimensions();
                 let _ = window.set_window_icon(Icon::from_rgba(img.into_raw(), iw, ih).ok());
+            }
+            if app.tray.is_none() {
+                app.tray = make_tray(&app.assets);
+                if app.tray.is_none() {
+                    eprintln!(
+                        "note: system tray unavailable (Linux: install libappindicator); \
+                         Hide auto-returns after 8s"
+                    );
+                }
             }
             let size = window.inner_size();
             let (sw, sh) = (size.width.max(1), size.height.max(1));
@@ -460,10 +585,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     MouseScrollDelta::PixelDelta(p) => p.y / 60.0,
                 };
                 if dy != 0.0 {
-                    let next = (app.opts.scale * (1.0 + 0.1 * dy.signum())).clamp(0.5, 4.0);
-                    if (next - app.opts.scale).abs() > f64::EPSILON {
+                    let base = live_scale(app.opts.scale);
+                    let next = (base * (1.0 + 0.1 * dy.signum())).clamp(0.5, 4.0);
+                    if (next - base).abs() > f64::EPSILON {
                         app.opts.scale = next;
-                        save_config(&Config { scale: next });
+                        save_state(app.window.as_deref(), next);
                         if let Some(w) = &app.window {
                             let _ = w.request_inner_size(LogicalSize::new(WIN_W as f64 * next, WIN_H as f64 * next));
                         }
@@ -503,6 +629,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 (ElementState::Released, MouseButton::Left) => {
                     if app.press.take().is_some() && !app.dragging {
                         app.click(app.mouse.0, app.mouse.1);
+                    } else if app.dragging {
+                        save_state(app.window.as_deref(), app.opts.scale);
                     }
                     app.dragging = false;
                 }
@@ -517,12 +645,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } => {
                 app.pet.menu_open = false;
             }
-            WindowEvent::CloseRequested => el.exit(),
+            WindowEvent::CloseRequested => {
+                save_state(app.window.as_deref(), app.opts.scale);
+                el.exit();
+            }
             WindowEvent::RedrawRequested => {
                 if app.window.is_some() {
                     let effects = {
-                        let App { pet, assets, content, window, size, .. } = &mut app;
+                        let App { pet, assets, content, window, size, opts, .. } = &mut app;
+                        let prev_walk = pet.walk_dir;
                         let (dx, effects) = pet.tick(|a| assets.has(a), content);
+                        if dx == 0 && prev_walk != 0 {
+                            // walk just finished: remember where we ended up
+                            save_state(window.as_deref(), opts.scale);
+                        }
                         if dx != 0 {
                             if let Some(window) = window {
                                 let (ax, aw) = window
@@ -564,6 +700,45 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             _ => {}
         },
         Event::AboutToWait => {
+            #[cfg(target_os = "linux")]
+            if app.tray.is_some() {
+                // libappindicator delivers registration + menu events on the
+                // default GMainContext; winit doesn't run it, so pump it.
+                while gtk::glib::MainContext::default().iteration(false) {}
+            }
+            // Hide-to-tray deadline (checked here, not on redraw: a hidden
+            // window stops emitting redraw events entirely).
+            if let Some(at) = app.hide_at {
+                if Instant::now() >= at {
+                    app.hide_at = None;
+                    if let Some(w) = &app.window {
+                        w.set_visible(false);
+                    }
+                }
+            }
+            while let Ok(ev) = tray_icon::menu::MenuEvent::receiver().try_recv() {
+                match ev.id.0.as_str() {
+                    "toggle" => toggle_visibility(&mut app),
+                    "quit" => {
+                        save_state(app.window.as_deref(), app.opts.scale);
+                        el.exit();
+                    }
+                    _ => {}
+                }
+            }
+            while let Ok(ev) = tray_icon::TrayIconEvent::receiver().try_recv() {
+                match ev {
+                    tray_icon::TrayIconEvent::Click {
+                        button: tray_icon::MouseButton::Left,
+                        button_state: tray_icon::MouseButtonState::Up,
+                        ..
+                    }
+                    | tray_icon::TrayIconEvent::DoubleClick { .. } => {
+                        toggle_visibility(&mut app)
+                    }
+                    _ => {}
+                }
+            }
             if let Some(w) = &app.window {
                 w.request_redraw();
             }

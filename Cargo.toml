@@ -19,6 +19,7 @@ rand = "0.9"
 ab_glyph = "0.2"
 cpal = { version = "0.15", features = ["jack"], optional = true }
 libc = "0.2"
+tray-icon = "0.19"
 
 [features]
 default = ["audio"]
@@ -29,3 +30,6 @@ audio = ["dep:rodio", "dep:cpal"]
 
 [profile.release]
 opt-level = 2
+
+[target."cfg(target_os = \"linux\")".dependencies]
+gtk = "0.18"

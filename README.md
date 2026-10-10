@@ -46,14 +46,23 @@ string in the tree is the crate `scoped-tls` (thread-local storage, not TLS).
 
 - Original Bonzi sprite animations (idle, blink, walk, dance, hide, think…),
   driven by the original per-frame timings and return-animation graph.
-- Speech bubbles with the original joke/fact/song corpus; optional local TTS
-  (`--tts`: `say` on macOS, PowerShell System.Speech on Windows, espeak-ng on Linux).
+- Speech bubbles with the original joke/fact/song corpus, cleaned of the
+  VocalTec markup (the parser treats `\` as a field delimiter — the original
+  data has odd backslash counts, so pair-based parsing leaks `spd=`/`pit=`
+  noise); optional local TTS (`--tts`: `say` on macOS, PowerShell
+  System.Speech on Windows, espeak-ng on Linux).
+- `[username]` placeholders in the original scripts are replaced with your
+  name: `--name NAME` (or `BONZI_NAME`), else the login account name.
 - Click to pet, right-click menu (joke / fact / song / trick / dance / walk / hide / about / quit).
+- System tray icon: left-click toggles visibility, menu has Show / Hide and
+  Quit; the buddy menu's "Hide" minimizes to the tray. On Linux this needs
+  `libappindicator` (e.g. `pacman -S libappindicator`); without a tray, Hide
+  auto-returns after 8 s.
 - Draggable borderless window; walks along the bottom of the work area and turns at screen edges.
 - Original WAV sound effects (`CHORD.WAV`, `Snd1/2.wav`, `Intro2.wav`).
-- Scroll-wheel over the buddy resizes it (0.5×–4×), persisted across restarts
-  (`$XDG_CONFIG_HOME/bonzibuddy-rs.json`); `--scale N` sets it at launch and HiDPI
-  scale factors are honored automatically.
+- Scroll-wheel over the buddy resizes it (0.5×–4×); zoom **and window
+  position** persist across restarts (`$XDG_CONFIG_HOME/bonzibuddy-rs.json`);
+  `--scale N` sets it at launch and HiDPI scale factors are honored automatically.
 - Zero network code, zero registry writes, zero install steps.
 
 ## Transparency & window behavior
@@ -75,6 +84,13 @@ Window Management → Window Rules → add a rule matching window class
 `bonzibuddy-rs` → set **Keep Above**. GNOME users can use the "Always on Top"
 extension similarly.
 
+Wayland also forbids client-side window moves, so "Take a walk" animates the
+walk in place there (the original vine-swing `MOVE` animation); on X11,
+Windows and macOS the window translates along the work-area bottom and turns
+at the screen edges. A full-width window would not fix Wayland walking — it
+would just block clicks across the bottom of the screen, since Wayland has no
+input-shape protocol either.
+
 ## Audio
 
 Sound effects play through cpal with the **JACK backend enabled** in addition
@@ -95,10 +111,14 @@ Flags:
 | Flag | Effect |
 |---|---|
 | `--scale N` | sprite/UI scale multiplier (0.5–4.0) |
+| `--name NAME` | name used for `[username]` in the scripts (or `BONZI_NAME`) |
 | `--matte` | solid Win95-teal backdrop instead of transparency (for WMs without a compositor) |
 | `--no-audio` | start silent |
 | `--tts` | speak bubbles with the OS voice |
 | `--assets PATH` | asset directory (default search: `$BONZI_ASSETS`, `./assets`, `../assets`, next to the binary, `/usr/share/bonzibuddy-rs/assets`) |
+
+Linux tray icon requires `libappindicator` at runtime
+(e.g. `sudo pacman -S libappindicator`); everything else runs without it.
 
 ### Cross-compiling / CI
 
