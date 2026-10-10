@@ -73,8 +73,10 @@ string in the tree is the crate `scoped-tls` (thread-local storage, not TLS).
   to embed one `[anim:NAME]` stage direction per reply (WINK, HUG, DANCE-ish
   SUNGLASSESCONTINUED, WALK, HIDE, …); the marker is stripped before
   speaking and applied as a visual-only animation.
-- System tray icon: left-click toggles visibility, menu has Show / Hide and
-  Quit; the buddy menu's "Hide" minimizes to the tray. On Linux this needs
+- System tray icon: left-click toggles visibility, menu has Show / Hide,
+  **Reset Zoom** and Quit; the buddy menu's "Hide" minimizes to the tray.
+  Reset Zoom restores 1.0× and pulls the window back onto the monitor —
+  the escape hatch after zooming Bonzi out of sight. On Linux this needs
   `libappindicator` (e.g. `pacman -S libappindicator`); without a tray, Hide
   auto-returns after 8 s.
 - Grab **the buddy himself** and drag: the window follows the pointer
