@@ -137,8 +137,9 @@ fn save_state(window: Option<&Window>, scale: f64) {
 }
 
 /// System tray icon: left-click toggles visibility; the menu has
-/// "Show / Hide" and "Quit". On Linux this needs libappindicator at runtime;
-/// returns `None` when the desktop offers no tray (Hide then auto-returns).
+/// "Show / Hide", "Reset Zoom" and "Quit". On Linux this needs libappindicator
+/// at runtime; returns `None` when the desktop offers no tray (Hide then
+/// auto-returns).
 fn make_tray(assets: &assets::Assets) -> Option<tray_icon::TrayIcon> {
     use tray_icon::menu::{Menu, MenuItem};
     use tray_icon::TrayIconBuilder;
@@ -155,8 +156,9 @@ fn make_tray(assets: &assets::Assets) -> Option<tray_icon::TrayIcon> {
     let icon = tray_icon::Icon::from_rgba(img.into_raw(), tw, th).ok()?;
     let menu = Menu::new();
     let toggle = MenuItem::with_id("toggle", "Show / Hide", true, None);
+    let reset = MenuItem::with_id("reset-zoom", "Reset Zoom", true, None);
     let quit = MenuItem::with_id("quit", "Quit", true, None);
-    menu.append_items(&[&toggle, &quit]).ok()?;
+    menu.append_items(&[&toggle, &reset, &quit]).ok()?;
     TrayIconBuilder::new()
         .with_menu(Box::new(menu))
         .with_menu_on_left_click(false)
@@ -177,6 +179,37 @@ fn toggle_visibility(app: &mut App) {
         app.pet.reveal();
         w.request_redraw();
     }
+}
+
+/// Tray "Reset Zoom": back to 1.0× and pull the window back onto the
+/// current monitor — zooming in hard can push the buddy off-screen, and
+/// zooming out leaves him tiny in a huge window you can't find.
+fn reset_zoom(app: &mut App) {
+    app.opts.scale = 1.0;
+    let Some(w) = &app.window else {
+        save_state(None, 1.0);
+        return;
+    };
+    let sf = w.scale_factor();
+    let _ = w.request_inner_size(LogicalSize::new(WIN_W as f64, WIN_H as f64));
+    if let Some(m) = w.current_monitor() {
+        // Full monitor bounds (winit has no work-area API); good enough to
+        // pull a lost window back on screen.
+        let mp = m.position();
+        let ms = m.size();
+        let nw = (WIN_W as f64 * sf) as i32;
+        let nh = (WIN_H as f64 * sf) as i32;
+        let p = w.outer_position().unwrap_or(PhysicalPosition::new(mp.x, mp.y));
+        let max_x = (mp.x + ms.width as i32 - nw).max(mp.x);
+        let max_y = (mp.y + ms.height as i32 - nh).max(mp.y);
+        w.set_outer_position(Position::Physical(PhysicalPosition::new(
+            p.x.clamp(mp.x, max_x),
+            p.y.clamp(mp.y, max_y),
+        )));
+    }
+    save_state(Some(w), 1.0);
+    app.pet.say("Phew, that's better — nice and comfy!", 4.0);
+    w.request_redraw();
 }
 
 /// ALSA/JACK print connection-probe failures to stderr (C libraries) even when
@@ -808,7 +841,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 i += 1;
             }
             "-h" | "--help" => {
-                println!("bonzibuddy-rs — safe offline BonziBuddy. Flags: --scale N --name NAME --matte --no-audio --tts --assets PATH\nScroll wheel over the window resizes the buddy; position, size and zoom are persisted.\nTray icon: left-click toggles visibility; menu has Show / Hide and Quit.");
+                println!("bonzibuddy-rs — safe offline BonziBuddy. Flags: --scale N --name NAME --matte --no-audio --tts --assets PATH\nScroll wheel over the window resizes the buddy; position, size and zoom are persisted.\nTray icon: left-click toggles visibility; menu has Show / Hide, Reset Zoom and Quit.");
                 return Ok(());
             }
             _ => {}
@@ -1202,6 +1235,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             while let Ok(ev) = tray_icon::menu::MenuEvent::receiver().try_recv() {
                 match ev.id.0.as_str() {
                     "toggle" => toggle_visibility(&mut app),
+                    "reset-zoom" => reset_zoom(&mut app),
                     "quit" => {
                         save_state(app.window.as_deref(), app.opts.scale);
                         el.exit();
