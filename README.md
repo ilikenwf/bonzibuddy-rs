@@ -53,7 +53,13 @@ string in the tree is the crate `scoped-tls` (thread-local storage, not TLS).
   System.Speech on Windows, espeak-ng on Linux).
 - `[username]` placeholders in the original scripts are replaced with your
   name: `--name NAME` (or `BONZI_NAME`), else the login account name.
-- Click to pet, right-click menu (joke / fact / song / trick / dance / walk / hide / about / quit).
+- Click to pet, right-click menu (joke / fact / song / trick / dance / walk /
+  ask / settings / hide / about / quit).
+- **Ask Bonzi…** — optional chat with any OpenAI-compatible endpoint
+  (`/chat/completions`). Off unless you configure it in **Settings…** (the
+  in-app dialog: endpoint / API key / model, Tab to switch fields, Enter to
+  save); replies appear in the speech bubble and via TTS. With no endpoint
+  set the binary never opens a socket.
 - System tray icon: left-click toggles visibility, menu has Show / Hide and
   Quit; the buddy menu's "Hide" minimizes to the tray. On Linux this needs
   `libappindicator` (e.g. `pacman -S libappindicator`); without a tray, Hide
@@ -63,7 +69,8 @@ string in the tree is the crate `scoped-tls` (thread-local storage, not TLS).
 - Scroll-wheel over the buddy resizes it (0.5×–4×); zoom **and window
   position** persist across restarts (`$XDG_CONFIG_HOME/bonzibuddy-rs.json`);
   `--scale N` sets it at launch and HiDPI scale factors are honored automatically.
-- Zero network code, zero registry writes, zero install steps.
+- Zero registry writes, zero install steps. The only network path is the
+  opt-in "Ask Bonzi" endpoint; with it unset nothing dials out.
 
 ## Transparency & window behavior
 
@@ -72,24 +79,22 @@ premultiplied alpha (verified: transparent pixels carry A=0 in the live window
 buffer). A compositor is required for the see-through effect; without one use
 `--matte`.
 
-| Platform | Transparency | Always-on-top | Drag |
+| Platform | Transparency | Always-on-top | Drag / walk |
 |---|---|---|---|
 | Windows | ✓ | ✓ | ✓ |
 | macOS | ✓ | ✓ | ✓ |
 | X11 (+compositor: KWin/compton/picom) | ✓ | ✓ | ✓ |
-| Wayland (KWin, GNOME, …) | ✓ (native ARGB surface) | ✗ — no protocol; see below | ✓ (compositor-driven) |
+| Wayland (KWin, GNOME, …) | ✓ | ✓ via XWayland (default) | ✓ via XWayland (default) |
 
-Wayland has no always-on-top protocol by design. On KDE: System Settings →
-Window Management → Window Rules → add a rule matching window class
-`bonzibuddy-rs` → set **Keep Above**. GNOME users can use the "Always on Top"
-extension similarly.
-
-Wayland also forbids client-side window moves, so "Take a walk" animates the
-walk in place there (the original vine-swing `MOVE` animation); on X11,
-Windows and macOS the window translates along the work-area bottom and turns
-at the screen edges. A full-width window would not fix Wayland walking — it
-would just block clicks across the bottom of the screen, since Wayland has no
-input-shape protocol either.
+On a Wayland session the app automatically restarts its event loop over
+**XWayland** (by unsetting `WAYLAND_DISPLAY` before winit initializes).
+Native Wayland gives ordinary clients neither always-on-top nor
+client-initiated window moves — Bonzi would sit frozen in one spot and sink
+under other windows. Over XWayland he is an override-redirect window: no
+taskbar entry, always above, and free to walk the length of the work area.
+KWin and GNOME both composite XWayland windows, so transparency keeps
+working. Set `BONZI_WAYLAND=1` to opt out and use native Wayland instead
+(expect: no walking, and a KWin window rule "Keep Above" for stacking).
 
 ## Audio
 

@@ -20,6 +20,9 @@ ab_glyph = "0.2"
 cpal = { version = "0.15", features = ["jack"], optional = true }
 libc = "0.2"
 tray-icon = "0.19"
+# Optional agent chat (Settings dialog). Only ever contacted when the user
+# configures an endpoint; the offline pet never touches the network.
+ureq = { version = "2", default-features = false, features = ["json"] }
 
 [features]
 default = ["audio"]

@@ -14,6 +14,7 @@
 //! Phase 2 (planned): an OpenAPI-compatible agent client can push the same
 //! `pet::Action` values the offline engine uses — see src/pet.rs.
 
+mod agent;
 mod assets;
 mod content;
 mod pet;
@@ -25,7 +26,7 @@ use pet::{Action, Effect, Pet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::dpi::{LogicalSize, PhysicalPosition, Position};
-use winit::event::{ElementState, Event, KeyEvent, MouseButton, MouseScrollDelta, WindowEvent};
+use winit::event::{ElementState, Event, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, NamedKey};
 use winit::window::{Icon, Window, WindowAttributes, WindowLevel};
@@ -48,11 +49,23 @@ struct Config {
     /// Physical window position; restored at startup when on-screen.
     x: Option<i32>,
     y: Option<i32>,
+    /// Optional OpenAI-compatible chat endpoint ("Ask Bonzi…"). Empty = off;
+    /// with it empty the binary never touches the network.
+    agent_endpoint: String,
+    agent_key: String,
+    agent_model: String,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { scale: 1.0, x: None, y: None }
+        Config {
+            scale: 1.0,
+            x: None,
+            y: None,
+            agent_endpoint: String::new(),
+            agent_key: String::new(),
+            agent_model: String::new(),
+        }
     }
 }
 
@@ -115,7 +128,12 @@ fn save_config(cfg: &Config) {
 /// Persist scale + current window position together.
 fn save_state(window: Option<&Window>, scale: f64) {
     let pos = window.and_then(|w| w.outer_position().ok());
-    save_config(&Config { scale: scale.clamp(0.5, 4.0), x: pos.map(|p| p.x), y: pos.map(|p| p.y) });
+    // Load first so agent settings survive every position/scale save.
+    let mut cfg = load_config();
+    cfg.scale = scale.clamp(0.5, 4.0);
+    cfg.x = pos.map(|p| p.x);
+    cfg.y = pos.map(|p| p.y);
+    save_config(&cfg);
 }
 
 /// System tray icon: left-click toggles visibility; the menu has
@@ -154,6 +172,8 @@ fn toggle_visibility(app: &mut App) {
         w.set_visible(false);
     } else {
         w.set_visible(true);
+        // Some WMs drop the above-level hint when a window is remapped.
+        w.set_window_level(WindowLevel::AlwaysOnTop);
         app.pet.reveal();
         w.request_redraw();
     }
@@ -230,10 +250,25 @@ const MENU: &[MenuItem] = &[
     MenuItem { label: "Do a trick", action: |p, _c| p.trick() },
     MenuItem { label: "Dance!", action: |p, _c| p.dance() },
     MenuItem { label: "Take a walk", action: |p, _c| p.start_walk() },
+    MenuItem { label: "Ask Bonzi…", action: |_, _| {} },
+    MenuItem { label: "Settings…", action: |_, _| {} },
     MenuItem { label: "Hide", action: |p, _c| p.hide() },
     MenuItem { label: "About", action: |p, _c| p.say(ABOUT, 12.0) },
     MenuItem { label: "Quit", action: |p, _c| p.push(Action::Quit) },
 ];
+
+/// In-app text-entry dialogs (rendered with our own font, no widgets crate).
+enum Dialog {
+    None,
+    Settings { fields: [String; 3], sel: usize },
+    Ask { input: String },
+}
+
+impl Dialog {
+    fn active(&self) -> bool {
+        !matches!(self, Dialog::None)
+    }
+}
 
 struct App {
     assets: assets::Assets,
@@ -257,27 +292,82 @@ struct App {
     /// When set (tray active), the window hides once this deadline passes,
     /// after the HIDE animation has played.
     hide_at: Option<Instant>,
+    agent: agent::AgentCfg,
+    agent_tx: std::sync::mpsc::Sender<agent::Msg>,
+    agent_rx: std::sync::mpsc::Receiver<agent::Msg>,
+    dialog: Dialog,
 }
 
 impl App {
+    /// Resolve a sound name to its on-disk file (assets/audio first).
+    fn sound_path(&self, name: &str) -> Option<std::path::PathBuf> {
+        for sub in ["audio", "sfx", "bonzi/audio"] {
+            let p = self.assets.root().join(sub).join(name);
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+        None
+    }
+
+    /// Last-resort playback when cpal finds no openable device (common when
+    /// the session has no Pulse/PipeWire socket): shell out to whatever the
+    /// distro provides, same spirit as the TTS fallback.
+    #[cfg(unix)]
+    fn play_sound_subprocess(&self, path: &std::path::Path) {
+        let p = path.to_str().unwrap_or_default();
+        let cands: [(&str, Vec<&str>); 4] = [
+            ("paplay", vec![p]),
+            ("aplay", vec!["-q", p]),
+            ("afplay", vec![p]),
+            ("ffplay", vec!["-nodisp", "-autoexit", "-loglevel", "quiet", p]),
+        ];
+        for (prog, args) in cands {
+            if std::process::Command::new(prog)
+                .args(&args)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .is_ok()
+            {
+                return;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    fn play_sound_subprocess(&self, _path: &std::path::Path) {}
+
     #[cfg(feature = "audio")]
     fn play_sound(&mut self, name: &str) {
         if !self.opts.audio {
             return;
         }
-        let Some(bytes) = self.assets.sound(name) else { return };
-        let Some((_s, handle)) = &self.audio else { return };
-        if let Ok(sink) = rodio::Sink::try_new(handle) {
-            if let Ok(src) = rodio::Decoder::new(std::io::Cursor::new(bytes.to_vec())) {
-                sink.append(src);
-                self.sinks.retain(|s| !s.empty());
-                self.sinks.push(sink);
+        match &self.audio {
+            Some((_s, handle)) => {
+                let Some(bytes) = self.assets.sound(name) else { return };
+                if let Ok(sink) = rodio::Sink::try_new(handle) {
+                    if let Ok(src) = rodio::Decoder::new(std::io::Cursor::new(bytes.to_vec())) {
+                        sink.append(src);
+                        self.sinks.retain(|s| !s.empty());
+                        self.sinks.push(sink);
+                    }
+                }
+            }
+            None => {
+                if let Some(p) = self.sound_path(name) {
+                    self.play_sound_subprocess(&p);
+                }
             }
         }
     }
 
     #[cfg(not(feature = "audio"))]
-    fn play_sound(&mut self, _name: &str) {}
+    fn play_sound(&mut self, name: &str) {
+        if let Some(p) = self.sound_path(name) {
+            self.play_sound_subprocess(&p);
+        }
+    }
 
     fn dispatch_effects(&mut self, effects: Vec<Effect>, el: &ActiveEventLoop) {
         for e in effects {
@@ -301,11 +391,17 @@ impl App {
             for (i, (mx, my, mw, mh)) in self.menu_rects.clone() {
                 if x >= mx as f64 && x < (mx + mw) as f64 && y >= my as f64 && y < (my + mh) as f64 {
                     self.pet.menu_open = false;
-                    (MENU[i].action)(&mut self.pet, &self.content);
-                    // With a tray, "Hide" minimizes to it after the HIDE
-                    // animation; without one the pet auto-returns in 8 s.
-                    if MENU[i].label == "Hide" && self.tray.is_some() {
-                        self.hide_at = Some(Instant::now() + Duration::from_millis(1400));
+                    match MENU[i].label {
+                        "Ask Bonzi…" => self.open_ask(),
+                        "Settings…" => self.open_settings(),
+                        label => {
+                            (MENU[i].action)(&mut self.pet, &self.content);
+                            // With a tray, "Hide" minimizes to it after the HIDE
+                            // animation; without one the pet auto-returns in 8 s.
+                            if label == "Hide" && self.tray.is_some() {
+                                self.hide_at = Some(Instant::now() + Duration::from_millis(1400));
+                            }
+                        }
                     }
                     return;
                 }
@@ -316,6 +412,117 @@ impl App {
         let (sx, sy, sw, sh) = self.sprite_rect;
         if x >= sx as f64 && x < (sx + sw) as f64 && y >= sy as f64 && y < (sy + sh) as f64 {
             self.pet.click(&self.content);
+        }
+    }
+
+    fn open_settings(&mut self) {
+        let cfg = load_config();
+        self.dialog = Dialog::Settings {
+            fields: [cfg.agent_endpoint, cfg.agent_key, cfg.agent_model],
+            sel: 0,
+        };
+        if let Some(w) = &self.window {
+            w.focus_window();
+        }
+    }
+
+    fn open_ask(&mut self) {
+        if !self.agent.enabled() {
+            self.pet.say(
+                "I can't chat without a brain server! Set an API endpoint in Settings first, heh.",
+                5.0,
+            );
+            return;
+        }
+        self.dialog = Dialog::Ask { input: String::new() };
+        if let Some(w) = &self.window {
+            w.focus_window();
+        }
+    }
+
+    /// Route a key press to the open dialog; returns true when consumed.
+    fn dialog_key(&mut self, key: &Key, text: Option<&str>) -> bool {
+        match key {
+            Key::Named(NamedKey::Escape) => {
+                self.dialog = Dialog::None;
+                return true;
+            }
+            Key::Named(NamedKey::Backspace) => {
+                match &mut self.dialog {
+                    Dialog::Settings { fields, sel } => {
+                        fields[*sel].pop();
+                    }
+                    Dialog::Ask { input } => {
+                        input.pop();
+                    }
+                    Dialog::None => return false,
+                }
+                return true;
+            }
+            Key::Named(NamedKey::Tab) => {
+                if let Dialog::Settings { sel, .. } = &mut self.dialog {
+                    *sel = (*sel + 1) % 3;
+                    return true;
+                }
+            }
+            Key::Named(NamedKey::Enter) => {
+                self.dialog_commit();
+                return true;
+            }
+            _ => {}
+        }
+        if let Some(c) =
+            text.and_then(|t| t.chars().next()).filter(|c| c.is_ascii_graphic() || *c == ' ')
+        {
+            match &mut self.dialog {
+                Dialog::Settings { fields, sel } => {
+                    if fields[*sel].len() < 200 {
+                        fields[*sel].push(c);
+                    }
+                }
+                Dialog::Ask { input } => {
+                    if input.len() < 400 {
+                        input.push(c);
+                    }
+                }
+                Dialog::None => return false,
+            }
+            return true;
+        }
+        false
+    }
+
+    fn dialog_commit(&mut self) {
+        match std::mem::replace(&mut self.dialog, Dialog::None) {
+            Dialog::Settings { fields, .. } => {
+                let mut cfg = load_config();
+                cfg.agent_endpoint = fields[0].trim().to_string();
+                cfg.agent_key = fields[1].trim().to_string();
+                cfg.agent_model = fields[2].trim().to_string();
+                save_config(&cfg);
+                self.agent = agent::AgentCfg {
+                    endpoint: cfg.agent_endpoint.clone(),
+                    key: cfg.agent_key.clone(),
+                    model: cfg.agent_model.clone(),
+                };
+                self.pet.say(
+                    if self.agent.enabled() {
+                        "Ooh, a brain upgrade! Try Ask Bonzi now."
+                    } else {
+                        "Back to fully offline mode. My secrets are safe."
+                    },
+                    4.0,
+                );
+            }
+            Dialog::Ask { input } => {
+                let q = input.trim().to_string();
+                if q.is_empty() {
+                    return;
+                }
+                self.pet.say("Hmm, let me think…", 8.0);
+                agent::send(self.agent.clone(), q, self.agent_tx.clone());
+            }
+            Dialog::None => {}
         }
     }
 
@@ -343,13 +550,18 @@ impl App {
         if self.pet.menu_open {
             let bw = (190.0 * s) as i32;
             let bh = (26.0 * s) as i32;
+            let gap = (2.0 * s) as i32;
             let bx = ((w as i32) - bw) / 2;
-            let mut by = 6;
+            // Anchor the menu to the sprite and clamp it into the window:
+            // at high zoom a top-anchored menu runs off-screen (the window can
+            // be taller than the monitor), so clicks land on invisible rows.
+            let total = MENU.len() as i32 * (bh + gap);
+            let mut by = (sy - total - (8.0 * s) as i32).clamp(4, (h as i32 - total - 4).max(4));
             for (i, item) in MENU.iter().enumerate() {
                 canvas.round_rect(bx, by, bw, bh, 6, [0xF0, 0xF0, 0xE0, 255], [0, 0, 0, 255]);
                 render::draw_line(&mut canvas, &self.assets.font, item.label, bx as f32 + (8.0 * s) as f32, by as f32 + bh as f32 * 0.68, scale, [0, 0, 0, 255]);
                 self.menu_rects.push((i, (bx, by, bw, bh)));
-                by += bh + 2;
+                by += bh + gap;
             }
         } else if let Some(bubble) = self.pet.bubble.clone() {
             let max_w = (w as f32) - (24.0 * s) as f32;
@@ -365,6 +577,44 @@ impl App {
                 render::draw_line(&mut canvas, &self.assets.font, line, bx as f32 + (10.0 * s) as f32, ty, scale, [0, 0, 0, 255]);
                 ty += lh;
             }
+        }
+
+        // Dialogs draw over everything, anchored to the window top.
+        if self.dialog.active() {
+            fn field(s: &str) -> String {
+                if s.is_empty() { "…".into() } else { s.chars().take(40).collect() }
+            }
+            let (title, rows, hint) = match &self.dialog {
+                Dialog::None => unreachable!(),
+                Dialog::Settings { fields, sel } => (
+                    "Agent settings",
+                    vec![
+                        format!("Endpoint: {}{}", if *sel == 0 { "> " } else { "  " }, field(&fields[0])),
+                        format!("API key:  {}{}", if *sel == 1 { "> " } else { "  " }, field(&fields[1])),
+                        format!("Model:    {}{}", if *sel == 2 { "> " } else { "  " }, field(&fields[2])),
+                    ],
+                    "Tab: field  Enter: save  Esc: cancel",
+                ),
+                Dialog::Ask { input } => (
+                    "Ask Bonzi",
+                    vec![format!("> {}", field(input)), " ".into()],
+                    "Enter: ask  Esc: cancel",
+                ),
+            };
+            let pad = (10.0 * s) as i32;
+            let bw = (w as i32) - 16;
+            let bh = (lh * (rows.len() as f32 + 2.6)) as i32 + pad;
+            let bx = 8;
+            let by = 4;
+            canvas.round_rect(bx, by, bw, bh, 10, [0xE8, 0xE8, 0xF4, 255], [0, 0, 0, 255]);
+            let mut ty = by as f32 + lh;
+            render::draw_line(&mut canvas, &self.assets.font, title, bx as f32 + (10.0 * s) as f32, ty, scale, [0x40, 0x00, 0x80, 255]);
+            ty += lh;
+            for row in &rows {
+                render::draw_line(&mut canvas, &self.assets.font, row, bx as f32 + (10.0 * s) as f32, ty, scale, [0, 0, 0, 255]);
+                ty += lh;
+            }
+            render::draw_line(&mut canvas, &self.assets.font, hint, bx as f32 + (10.0 * s) as f32, ty + lh * 0.35, scale, [0x60, 0x60, 0x60, 255]);
         }
 
         if let Some(frames) = self.assets.frames(&self.pet.anim) {
@@ -399,7 +649,19 @@ impl App {
 use render::Canvas;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // A desktop pet needs override-redirect semantics (no taskbar, always
+    // above, free programmatic movement). Native Wayland offers none of that
+    // to normal clients — walking would freeze and the compositor decides
+    // stacking. XWayland gives us all three under KWin/GNOME; opt out with
+    // BONZI_WAYLAND=1.
+    if std::env::var_os("WAYLAND_DISPLAY").is_some()
+        && std::env::var("BONZI_WAYLAND").as_deref() != Ok("1")
+    {
+        std::env::remove_var("WAYLAND_DISPLAY");
+        eprintln!("note: Wayland session — using XWayland for always-on-top and walking (BONZI_WAYLAND=1 to override)");
+    }
     let cfg = load_config();
+    let (agent_tx, agent_rx) = std::sync::mpsc::channel();
     let saved_pos = (cfg.x, cfg.y);
     let mut opts = Opts { scale: cfg.scale, matte: std::env::var("BONZI_MATTE").is_ok(), audio: true, tts: false };
     let args: Vec<String> = std::env::args().collect();
@@ -465,6 +727,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         startup_done: false,
         tray: None,
         hide_at: None,
+        agent: agent::AgentCfg {
+            endpoint: cfg.agent_endpoint.clone(),
+            key: cfg.agent_key.clone(),
+            model: cfg.agent_model.clone(),
+        },
+        agent_tx: agent_tx,
+        agent_rx: agent_rx,
+        dialog: Dialog::None,
     };
 
     let el = EventLoop::new()?;
@@ -485,6 +755,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             {
                 use winit::platform::windows::WindowAttributesExtWindows;
                 attrs = attrs.with_skip_taskbar(true);
+            }
+            // X11: an override-redirect window bypasses the WM entirely —
+            // no taskbar entry, no decorations, and nothing can un-float it.
+            // The pet positions and moves itself programmatically anyway.
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            {
+                use winit::platform::x11::WindowAttributesExtX11;
+                attrs = attrs.with_override_redirect(true);
             }
             let Ok(window) = el.create_window(attrs) else {
                 eprintln!("could not create window");
@@ -639,11 +917,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 _ => {}
             },
-            WindowEvent::KeyboardInput {
-                event: KeyEvent { logical_key: Key::Named(NamedKey::Escape), state: ElementState::Pressed, .. },
-                ..
-            } => {
-                app.pet.menu_open = false;
+            WindowEvent::KeyboardInput { event, .. }
+                if event.state == ElementState::Pressed =>
+            {
+                if app.dialog.active() {
+                    app.dialog_key(&event.logical_key, event.text.as_deref());
+                } else if matches!(event.logical_key, Key::Named(NamedKey::Escape)) {
+                    app.pet.menu_open = false;
+                }
             }
             WindowEvent::CloseRequested => {
                 save_state(app.window.as_deref(), app.opts.scale);
@@ -700,6 +981,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             _ => {}
         },
         Event::AboutToWait => {
+            // Agent replies land here (worker thread → channel → bubble+TTS).
+            while let Ok(agent::Msg::Reply(r)) = app.agent_rx.try_recv() {
+                match r {
+                    Ok(text) => {
+                        let secs = (3.0 + text.len() as f64 * 0.06).clamp(4.0, 14.0);
+                        app.pet.say(&text, secs);
+                        if app.pet.is_idle() {
+                            app.pet.set_anim("EXPLAIN", false);
+                        }
+                    }
+                    Err(e) => app.pet.say(&format!("My brain went fuzzy: {e}"), 6.0),
+                }
+            }
             #[cfg(target_os = "linux")]
             if app.tray.is_some() {
                 // libappindicator delivers registration + menu events on the
