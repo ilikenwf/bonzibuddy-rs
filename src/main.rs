@@ -296,6 +296,11 @@ struct App {
     agent_tx: std::sync::mpsc::Sender<agent::Msg>,
     agent_rx: std::sync::mpsc::Receiver<agent::Msg>,
     dialog: Dialog,
+    /// X11 window that held keyboard focus before a dialog grabbed it.
+    prev_focus: Option<u32>,
+    /// Our own X11 window id (override-redirect ⇒ the WM never focuses it,
+    /// so dialogs must XSetInputFocus it themselves).
+    x11_id: Option<u32>,
 }
 
 impl App {
@@ -415,15 +420,66 @@ impl App {
         }
     }
 
+    /// Override-redirect windows are invisible to the WM, so nothing ever
+    /// gives them keyboard focus. Grab it explicitly for the duration of a
+    /// dialog (the rofi trick) and hand it back afterwards.
+    fn grab_keyboard(&mut self) {
+        #[cfg(target_os = "linux")]
+        {
+            use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+            use x11rb::connection::Connection;
+            use x11rb::protocol::xproto::{ConnectionExt, InputFocus};
+            // winit 0.30's WindowExtX11 is a marker trait; the real xid comes
+            // through raw-window-handle.
+            let id: Option<u32> = self
+                .window
+                .as_ref()
+                .and_then(|w| w.window_handle().ok())
+                .and_then(|h| match h.as_raw() {
+                    RawWindowHandle::Xlib(h) => Some(h.window as u32),
+                    RawWindowHandle::Xcb(h) => Some(h.window.get()),
+                    _ => None,
+                });
+            if let Some(id) = id {
+                self.x11_id = Some(id);
+                if let Ok((conn, _)) = x11rb::connect(None) {
+                    let focus = x11rb::protocol::xproto::get_input_focus(&conn)
+                        .ok()
+                        .and_then(|c| c.reply().ok());
+                    if let Some(f) = focus {
+                        // Focus ids 0/1 are the NONE/POINTER_ROOT sentinels.
+                        self.prev_focus =
+                            if f.focus > 1 && f.focus != id { Some(f.focus) } else { None };
+                    }
+                    let _ = conn.set_input_focus(InputFocus::PARENT, id, 0u32);
+                    let _ = conn.flush();
+                }
+            }
+        }
+        if let Some(w) = &self.window {
+            w.focus_window();
+        }
+    }
+
+    fn release_keyboard(&mut self) {
+        #[cfg(target_os = "linux")]
+        if let Some(id) = self.prev_focus.take() {
+            use x11rb::connection::Connection;
+            use x11rb::protocol::xproto::{ConnectionExt, InputFocus};
+            if let Ok((conn, _)) = x11rb::connect(None) {
+                let _ = conn.set_input_focus(InputFocus::PARENT, id, 0u32);
+                let _ = conn.flush();
+            }
+        }
+    }
+
     fn open_settings(&mut self) {
         let cfg = load_config();
         self.dialog = Dialog::Settings {
             fields: [cfg.agent_endpoint, cfg.agent_key, cfg.agent_model],
             sel: 0,
         };
-        if let Some(w) = &self.window {
-            w.focus_window();
-        }
+        self.grab_keyboard();
     }
 
     fn open_ask(&mut self) {
@@ -435,9 +491,7 @@ impl App {
             return;
         }
         self.dialog = Dialog::Ask { input: String::new() };
-        if let Some(w) = &self.window {
-            w.focus_window();
-        }
+        self.grab_keyboard();
     }
 
     /// Route a key press to the open dialog; returns true when consumed.
@@ -445,6 +499,7 @@ impl App {
         match key {
             Key::Named(NamedKey::Escape) => {
                 self.dialog = Dialog::None;
+                self.release_keyboard();
                 return true;
             }
             Key::Named(NamedKey::Backspace) => {
@@ -493,6 +548,7 @@ impl App {
     }
 
     fn dialog_commit(&mut self) {
+        self.release_keyboard();
         match std::mem::replace(&mut self.dialog, Dialog::None) {
             Dialog::Settings { fields, .. } => {
                 let mut cfg = load_config();
@@ -735,6 +791,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         agent_tx: agent_tx,
         agent_rx: agent_rx,
         dialog: Dialog::None,
+        prev_focus: None,
+        x11_id: None,
     };
 
     let el = EventLoop::new()?;
@@ -762,7 +820,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             {
                 use winit::platform::x11::WindowAttributesExtX11;
-                attrs = attrs.with_override_redirect(true);
+                // Only when we actually land on X11 (XWayland-forced or plain
+                // X11 session); native Wayland (BONZI_WAYLAND=1) rejects it.
+                if std::env::var_os("WAYLAND_DISPLAY").is_none() {
+                    attrs = attrs.with_override_redirect(true);
+                }
             }
             let Ok(window) = el.create_window(attrs) else {
                 eprintln!("could not create window");
@@ -947,7 +1009,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     .map(|m| (m.position().x, m.size().width as i32))
                                     .unwrap_or((0, 1920));
                                 let mut pos = window.outer_position().unwrap_or(PhysicalPosition::new(0, 0));
-                                pos.x += (dx as f64 * window.scale_factor()) as i32;
+                                pos.x += (dx as f64 * window.scale_factor() * opts.scale) as i32;
                                 if pos.x < ax {
                                     pos.x = ax;
                                     pet.walk_dir = 1;

@@ -62,6 +62,11 @@ pub struct Pet {
     mouth_at: Instant,
     pub walk_dir: i8,
     walk_until: Option<Instant>,
+    /// Wall-clock dt bookkeeping: walk speed is px/second, not px/redraw,
+    /// so ground speed stays glued to the 100 ms/frame vine-swing cycle
+    /// regardless of monitor refresh or frame hitches.
+    last_tick: Instant,
+    walk_frac: f64,
     pub frame_at: Instant,
     pub frame_dur: Duration,
     hide_until: Option<Instant>,
@@ -94,6 +99,8 @@ impl Pet {
             mouth_at: now,
             walk_dir: 0,
             walk_until: None,
+            last_tick: now,
+            walk_frac: 0.0,
             next_idle: now + Duration::from_secs(12),
             menu_open: false,
             hidden: false,
@@ -213,6 +220,8 @@ impl Pet {
     /// Returns (window_dx_from_walk, effects).
     pub fn tick(&mut self, has_anim: impl Fn(&str) -> bool, content: &Content) -> (i32, Vec<Effect>) {
         let now = Instant::now();
+        let dt = now.duration_since(self.last_tick).as_secs_f64().clamp(0.0, 0.25);
+        self.last_tick = now;
         let mut dx = 0i32;
 
         // drain queue (one action per tick keeps pacing natural)
@@ -269,7 +278,14 @@ impl Pet {
 
         // walk movement
         if self.walk_dir != 0 {
-            dx = self.walk_dir as i32 * 2; // px per tick (~60fps) ≈ 120 px/s
+            // 150 logical px/s at scale 1.0 ≈ one vine-swing cycle (1 s of
+            // original 100 ms frames) per ~1.1 sprite widths.
+            self.walk_frac += dt * 150.0;
+            let whole = self.walk_frac.trunc() as i32;
+            if whole != 0 {
+                self.walk_frac -= whole as f64;
+                dx = self.walk_dir as i32 * whole;
+            }
             if let Some(until) = self.walk_until {
                 if now >= until {
                     self.walk_dir = 0;
@@ -296,7 +312,13 @@ impl Pet {
         // frame advance
         if now >= self.frame_at + self.frame_dur {
             self.frame += 1;
-            self.frame_at = now;
+            // Advance by the scheduled duration (not `now`) so per-frame
+            // timing tracks the original .acs schedule; resync only after a
+            // long stall (hidden window, suspend).
+            self.frame_at += self.frame_dur;
+            if now.duration_since(self.frame_at) > 4 * self.frame_dur {
+                self.frame_at = now;
+            }
             // duration set by caller via frame_dur hook; default handled in main
             let n = self.frame;
             if let Some(until) = self.loop_until {

@@ -64,7 +64,14 @@ string in the tree is the crate `scoped-tls` (thread-local storage, not TLS).
   Quit; the buddy menu's "Hide" minimizes to the tray. On Linux this needs
   `libappindicator` (e.g. `pacman -S libappindicator`); without a tray, Hide
   auto-returns after 8 s.
-- Draggable borderless window; walks along the bottom of the work area and turns at screen edges.
+- Draggable borderless window; walks along the bottom of the work area and
+  turns at screen edges. Walk speed is wall-clock (150 logical px/s at 1×,
+  scaling with zoom and DPI) so the vine-swing feet never slide on ice at
+  120 Hz or after a frame hitch.
+- Settings/Ask dialogs grab X11 input focus themselves (`XSetInputFocus`):
+  an override-redirect window is invisible to the WM, so without this the
+  keyboard would never reach the text fields. Focus is handed back when the
+  dialog closes.
 - Original WAV sound effects (`CHORD.WAV`, `Snd1/2.wav`, `Intro2.wav`).
 - Scroll-wheel over the buddy resizes it (0.5×–4×); zoom **and window
   position** persist across restarts (`$XDG_CONFIG_HOME/bonzibuddy-rs.json`);
