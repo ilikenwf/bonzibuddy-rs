@@ -774,14 +774,14 @@ impl App {
             }
         }
 
-        // Upload as premultiplied BGRA (Wayland/X11 compositor convention).
+        // Upload as premultiplied RGBA (pixels' frame buffer format).
         let Some(px) = &mut self.pixels else { return };
         let frame = px.frame_mut();
         for (dst, src) in frame.chunks_exact_mut(4).zip(canvas.px.chunks_exact(4)) {
             let a = src[3] as u16;
-            dst[0] = (src[2] as u16 * a / 255) as u8;
+            dst[0] = (src[0] as u16 * a / 255) as u8;
             dst[1] = (src[1] as u16 * a / 255) as u8;
-            dst[2] = (src[0] as u16 * a / 255) as u8;
+            dst[2] = (src[2] as u16 * a / 255) as u8;
             dst[3] = a as u8;
         }
         let _ = px.render();
