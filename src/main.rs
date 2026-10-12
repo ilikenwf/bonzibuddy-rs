@@ -474,6 +474,8 @@ struct App {
     /// Last spawned fallback player / TTS child; killed when new audio
     /// starts so outputs never overlap.
     child: Option<std::process::Child>,
+    /// Current TTS output (rodio-mixed espeak or a raw child).
+    voice: Option<tts::Voice>,
     mouse: (f64, f64),
     press: Option<((f64, f64), (i32, i32))>,
     dragging: bool,
@@ -511,6 +513,9 @@ impl App {
         #[cfg(feature = "audio")]
         if let Some(s) = self.sink.take() {
             s.stop();
+        }
+        if let Some(v) = self.voice.take() {
+            v.stop();
         }
         if let Some(mut c) = self.child.take() {
             let _ = c.kill();
@@ -636,7 +641,18 @@ impl App {
                 Effect::SpeakTts(t) => {
                     if self.opts.tts {
                         self.stop_voice();
-                        self.child = tts::speak(&t);
+                        #[cfg(all(feature = "audio", target_os = "linux"))]
+                        {
+                            self.voice = match &self.audio {
+                                Some((_s, handle)) => tts::speak_mixed(&t, handle)
+                                    .or_else(|| tts::speak(&t).map(tts::Voice::Child)),
+                                None => tts::speak(&t).map(tts::Voice::Child),
+                            };
+                        }
+                        #[cfg(not(all(feature = "audio", target_os = "linux")))]
+                        {
+                            self.voice = tts::speak(&t).map(tts::Voice::Child);
+                        }
                     }
                 }
                 Effect::Quit => {
@@ -891,9 +907,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         dragging: false,
         menu_rects: Vec::new(),
         sprite_rect: (0, 0, 0, 0),
-        startup_done: false,
+        voice: None,
         tray: None,
         hide_at: None,
+        startup_done: false,
         agent: agent::AgentCfg {
             endpoint: cfg.agent_endpoint.clone(),
             key: cfg.agent_key.clone(),
