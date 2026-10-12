@@ -51,18 +51,52 @@ impl Canvas {
             }
         }
     }
-    /// Nearest-neighbour sprite blit with alpha.
+    /// Alpha-weighted bilinear sprite blit: pixel-center sampling is
+    /// exact nearest at scale == 1 and smooth above it; premultiplied
+    /// taps keep transparent pixels from bleeding their color, and edge
+    /// taps clamp so interior alpha stays full.
     pub fn blit(&mut self, frame: &crate::assets::Frame, x: i32, y: i32, scale: f64) {
         let sw = frame.w as i32;
         let sh = frame.h as i32;
         let dw = (frame.w as f64 * scale) as i32;
         let dh = (frame.h as f64 * scale) as i32;
+        let tap = |ox: i32, oy: i32| -> [u8; 4] {
+            let ox = ox.clamp(0, sw - 1) as usize;
+            let oy = oy.clamp(0, sh - 1) as usize;
+            let i = (oy * frame.w as usize + ox) * 4;
+            [frame.rgba[i], frame.rgba[i + 1], frame.rgba[i + 2], frame.rgba[i + 3]]
+        };
         for dy in 0..dh {
-            let sy = (dy * sh) / dh.max(1);
+            let fy = (dy as f64 + 0.5) / scale - 0.5;
+            let y0 = fy.floor() as i32;
+            let wy = fy - y0 as f64;
             for dx in 0..dw {
-                let sx = (dx * sw) / dw.max(1);
-                let i = ((sy as usize) * frame.w as usize + sx as usize) * 4;
-                let c = [frame.rgba[i], frame.rgba[i + 1], frame.rgba[i + 2], frame.rgba[i + 3]];
+                let fx = (dx as f64 + 0.5) / scale - 0.5;
+                let x0 = fx.floor() as i32;
+                let wx = fx - x0 as f64;
+                let mut wa = 0.0f64;
+                let mut wr = 0.0f64;
+                let mut wg = 0.0f64;
+                let mut wb = 0.0f64;
+                for (oy, wyw) in [(y0, 1.0 - wy), (y0 + 1, wy)] {
+                    for (ox, wxw) in [(x0, 1.0 - wx), (x0 + 1, wx)] {
+                        let [r, g, b, a] = tap(ox, oy);
+                        let w = a as f64 * wyw * wxw;
+                        wa += w;
+                        wr += w * r as f64;
+                        wg += w * g as f64;
+                        wb += w * b as f64;
+                    }
+                }
+                if wa <= 0.0 {
+                    continue;
+                }
+                let c = [
+                    (wr / wa).clamp(0.0, 255.0) as u8,
+                    (wg / wa).clamp(0.0, 255.0) as u8,
+                    (wb / wa).clamp(0.0, 255.0) as u8,
+                    wa.round().clamp(1.0, 255.0) as u8,
+                ];
                 self.blend(x + dx, y + dy, c);
             }
         }
