@@ -39,6 +39,8 @@ struct Opts {
     matte: bool,
     audio: bool,
     tts: bool,
+    /// Debug: lock the pet to one named animation (see --list-scenes).
+    scene: Option<String>,
 }
 
 /// Persisted user settings (`$XDG_CONFIG_HOME/bonzibuddy-rs.json`).
@@ -837,10 +839,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cfg = load_config();
     let (agent_tx, agent_rx) = std::sync::mpsc::channel();
     let saved_pos = (cfg.x, cfg.y);
-    let mut opts = Opts { scale: cfg.scale, matte: std::env::var("BONZI_MATTE").is_ok(), audio: true, tts: false };
+    let mut opts = Opts { scale: cfg.scale, matte: std::env::var("BONZI_MATTE").is_ok(), audio: true, tts: false, scene: None };
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--test-audio") {
         return test_audio();
+    }
+    if args.iter().any(|a| a == "--list-scenes") {
+        let a = assets::Assets::load()?;
+        let mut names: Vec<&str> = a.anims.keys().map(|s| s.as_str()).collect();
+        names.sort();
+        for n in &names {
+            println!("{n}");
+        }
+        println!("# {} animations; run with --scene NAME to lock one", names.len());
+        return Ok(());
     }
     let mut i = 1;
     while i < args.len() {
@@ -849,7 +861,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "--matte" => opts.matte = true,
             "--no-audio" => opts.audio = false,
             "--tts" => opts.tts = true,
-            "--assets" => { if let Some(p) = args.get(i + 1) { std::env::set_var("BONZI_ASSETS", p); } i += 1; }
+            "--scene" => {
+                if let Some(s) = args.get(i + 1) {
+                    opts.scene = Some(s.to_ascii_uppercase());
+                }
+                i += 1;
+            }
             "--name" => {
                 if let Some(n) = args.get(i + 1).filter(|v| !v.trim().is_empty()) {
                     std::env::set_var("BONZI_NAME", n);
@@ -921,6 +938,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         cfg_mtime: config_mtime(),
         ask_mtime: ask_mtime(),
     };
+    if let Some(s) = app.opts.scene.clone() {
+        if app.assets.has(&s) {
+            app.pet.set_anim(&s, true);
+            app.pet.scene_lock = true;
+        } else {
+            eprintln!("no animation named {s:?}; see --list-scenes");
+        }
+    }
 
     let el = EventLoop::new()?;
     el.set_control_flow(ControlFlow::WaitUntil(Instant::now() + Duration::from_millis(16)));

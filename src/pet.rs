@@ -71,6 +71,9 @@ pub struct Pet {
     pub anim: String,
     pub frame: usize,
     pub looping: bool,
+    /// Debug flag: --scene NAME suppresses the idle personality engine so
+    /// the locked animation keeps looping for inspection.
+    pub scene_lock: bool,
     loop_until: Option<Instant>,
     pub bubble: Option<String>,
     pub bubble_until: Option<Instant>,
@@ -118,6 +121,7 @@ impl Pet {
             frame_at: now,
             frame_dur: Duration::from_millis(100),
             looping: false,
+            scene_lock: false,
             loop_until: None,
             bubble: None,
             bubble_until: None,
@@ -469,7 +473,7 @@ impl Pet {
         }
 
         // idle personality engine — silent while a chat reply owns the voice.
-        if !chat_locked && self.is_idle() && now >= self.next_idle {
+        if !chat_locked && !self.scene_lock && self.is_idle() && now >= self.next_idle {
             self.next_idle = now + Duration::from_secs(18 + rand::rng().random_range(0..30) as u64);
             let roll: u32 = rand::rng().random_range(0..100);
             match roll {
