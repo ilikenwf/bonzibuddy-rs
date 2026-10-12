@@ -27,6 +27,8 @@ ureq = { version = "2", default-features = false, features = ["json"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 # libappindicator tray support pumps the default GMainContext.
 gtk = "0.18"
+# MIT-SCREEN-SAVER idle query for the original's user-idle action gate.
+x11rb = { version = "0.13", features = ["screensaver"] }
 
 [features]
 default = ["audio"]

@@ -91,6 +91,11 @@ pub struct Pet {
     pub frame_dur: Duration,
     hide_until: Option<Instant>,
     next_idle: Instant,
+    /// Original `tmrCharacterAction_Timer` fired actions only while the
+    /// user was idle (time since last mouse/keyboard input, BONZI432_RE.md
+    /// §2). Maintained by main from the X11 MIT-SCREEN-SAVER extension;
+    /// platforms without a query default to true.
+    user_idle: bool,
     pub menu_open: bool,
     hidden: bool,
     queue: VecDeque<(Action, Instant)>,
@@ -133,6 +138,7 @@ impl Pet {
             last_tick: now,
             walk_frac: 0.0,
             next_idle: now + Duration::from_secs(12),
+            user_idle: true,
             menu_open: false,
             hidden: false,
             hide_until: None,
@@ -220,6 +226,11 @@ impl Pet {
         self.frame = 0;
         self.frame_at = Instant::now();
         self.looping = looping;
+    }
+
+    /// Idle-gate input from the host (see `user_idle`).
+    pub fn set_user_idle(&mut self, idle: bool) {
+        self.user_idle = idle;
     }
 
     pub fn is_idle(&self) -> bool {
@@ -472,21 +483,42 @@ impl Pet {
             }
         }
 
-        // idle personality engine — silent while a chat reply owns the voice.
+        // Idle personality engine — port of `tmrCharacterAction_Timer` +
+        // `RandomActionEvent` (BONZI432_RE.md §2): the countdown re-arms to
+        // 5-10 ticks (~1 s each) after each action; at zero an action fires
+        // only while the USER is idle, otherwise it re-checks next tick.
+        // The draw is `Int(8*Rnd+1)`: six cases land on silent random-idle
+        // playback (slot 0x960 arg2), case 3 is the "Search" gag (Play
+        // Search + Speak a fact), case 5 the "Explain" gag (Play Explain +
+        // Speak a joke). Silent while a chat reply owns the voice.
         if !chat_locked && !self.scene_lock && self.is_idle() && now >= self.next_idle {
-            self.next_idle = now + Duration::from_secs(18 + rand::rng().random_range(0..30) as u64);
-            let roll: u32 = rand::rng().random_range(0..100);
-            match roll {
-                0..=24 => self.tell_joke(content),
-                25..=49 => self.tell_fact(content),
-                50..=64 => { let a = pick(FUN_POOL, "GIGGLE"); if has_anim(a) { self.set_anim(a, false); } }
-                65..=72 => self.dance(),
-                73..=79 => self.sing(content),
-                80..=89 => self.start_walk(),
-                _ => {
-                    let line = Self::pick_text(&content.greetings);
-                    self.bubble_now(line, 4.5);
+            if self.user_idle {
+                self.next_idle =
+                    now + Duration::from_secs(5 + rand::rng().random_range(0..6) as u64);
+                match rand::rng().random_range(1..=8u32) {
+                    3 => self.tell_fact(content),
+                    5 => self.tell_joke(content),
+                    _ => {
+                        // Random idle playback: mostly calm idles, sometimes
+                        // a fun gag; the clone adds the walk among these
+                        // draws (the original's walking lived in MS Agent).
+                        if rand::rng().random_bool(0.15) {
+                            self.start_walk();
+                        } else {
+                            let pool: &[&str] = if rand::rng().random_bool(0.75) {
+                                IDLE_POOL
+                            } else {
+                                FUN_POOL
+                            };
+                            let a = pick(pool, "IDLE1_1");
+                            if has_anim(a) {
+                                self.set_anim(a, false);
+                            }
+                        }
+                    }
                 }
+            } else {
+                self.next_idle = now + Duration::from_secs(1);
             }
         }
         (dx, std::mem::take(&mut self.pending))
@@ -779,5 +811,37 @@ mod tests {
             })
             .collect();
         assert!(missing.is_empty(), "audio-carrying animations never triggered: {missing:?}");
+    }
+
+    #[test]
+    fn scheduler_respects_user_idle_gate() {
+        let c = content();
+        let mut p = Pet::new();
+        p.pending.clear();
+        // User is active: the expiring countdown must NOT fire an action;
+        // it re-arms a ~1 s re-check (tmrCharacterAction idle gate).
+        p.set_user_idle(false);
+        p.next_idle = Instant::now() - Duration::from_millis(1);
+        let (_, e) = p.tick(|_| true, |_, _| None, &c);
+        assert!(e.is_empty() && p.queue.is_empty(), "no action while the user is active");
+        let recheck = p.next_idle.saturating_duration_since(Instant::now());
+        assert!(recheck < Duration::from_secs(3), "active gate re-checks quickly: {recheck:?}");
+        // User idle: every expired countdown performs a draw, proven by the
+        // 5-10 tick re-arm (a blocked gate would re-arm ~1 s instead).
+        p.set_user_idle(true);
+        for i in 0..20 {
+            p.next_idle = Instant::now() - Duration::from_millis(1);
+            p.queue.clear();
+            p.walk_dir = 0;
+            p.bubble = None;
+            p.speaking = false;
+            p.looping = false;
+            p.tick(|_| true, |_, _| None, &c);
+            let rearm = p.next_idle.saturating_duration_since(Instant::now());
+            assert!(
+                rearm > Duration::from_secs(4) && rearm < Duration::from_secs(11),
+                "draw {i} must re-arm 5-10 ticks, got {rearm:?}"
+            );
+        }
     }
 }

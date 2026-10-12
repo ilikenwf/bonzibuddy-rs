@@ -1159,6 +1159,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let effects = {
                         let App { pet, assets, content, window, size, opts, .. } = &mut app;
                         let prev_walk = pet.walk_dir;
+                        let idle_secs = user_idle_secs();
+                        pet.set_user_idle(idle_secs.map(|s| s >= 5).unwrap_or(true));
                         let (dx, effects) =
                             pet.tick(|a| assets.has(a), |a, f| assets.frame_audio(a, f), content);
                         if dx == 0 && prev_walk != 0 {
@@ -1306,4 +1308,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         _ => {}
     })?;
     Ok(())
+}
+
+/// Seconds since the user last touched mouse/keyboard, via the X11
+/// MIT-SCREEN-SAVER extension (works on plain X11 and XWayland sessions —
+/// the app forces XWayland under Wayland compositors). `None` where no
+/// query exists (native Wayland, Windows, macOS): the idle gate then
+/// treats the user as idle, i.e. the pre-port behavior.
+#[cfg(target_os = "linux")]
+fn user_idle_secs() -> Option<u64> {
+    use x11rb::connection::Connection as _;
+    use x11rb::protocol::screensaver::ConnectionExt as _;
+    thread_local! {
+        static CONN: Option<(x11rb::rust_connection::RustConnection, usize)> =
+            x11rb::connect(None).ok();
+    }
+    CONN.with(|c| {
+        let (conn, screen) = c.as_ref()?;
+        let root = conn.setup().roots[*screen].root;
+        let info = conn.screensaver_query_info(root).ok()?.reply().ok()?;
+        Some(info.ms_since_user_input as u64 / 1000)
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn user_idle_secs() -> Option<u64> {
+    None
 }

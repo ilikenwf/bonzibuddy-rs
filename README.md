@@ -44,6 +44,17 @@ string in the tree is the crate `scoped-tls` (thread-local storage, not TLS).
 
 ## Features
 
+- **Idle behavior faithful to `tmrCharacterAction_Timer` +
+  `RandomActionEvent`** (`analysis/BONZI432_RE.md` §2): a countdown re-arms
+  to 5–10 ticks after each action and fires only while the *user* is idle
+  (measured via the X11 MIT-SCREEN-SAVER extension on X11/XWayland; other
+  platforms treat the user as idle). The draw is the original's
+  `Int(8*Rnd+1)`: six cases land on silent random-idle playback, case 3 is
+  the "Search" gag (Play Search + speak a fact), case 5 the "Explain" gag
+  (Play Explain + speak a joke) — so Bonzi is weighted toward quiet idle
+  animations, exactly like the original. The original's walking itself was
+  performed by MS Agent (`agentsvrs.exe`), not the payload; the clone's
+  walk is a reimplementation included among the idle draws.
 - Original Bonzi sprite animations (idle, blink, walk, dance, hide, think,
   read, write, search, sunglasses…), driven by the original per-frame
   timings and return-animation graph — all 146 animations from the `.acs`.

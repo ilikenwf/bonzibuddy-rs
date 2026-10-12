@@ -260,6 +260,7 @@ dependencies = [
  "ureq",
  "wgpu",
  "winit",
+ "x11rb",
 ]
 
 [[package]]
