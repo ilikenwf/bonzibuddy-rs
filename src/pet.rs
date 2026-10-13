@@ -49,13 +49,23 @@ pub enum Effect {
     Quit,
 }
 
-const IDLE_POOL: &[&str] = &[
+// Progressive idle pools — MS Agent §3.1: IdlingLevel1 → 2 → 3, each level
+// a random pick from its own list, BLINK present in L1+L2 like Merlin's
+// STATEINFO. Design guidance: L1 = blink/glance, L2 = reading/curious,
+// L3 = sleeping. Asset limitation: Bonzi's extracted .acs has no IDLE2_*
+// animations (Merlin's L2 = Idle2_* + Blink + Idle1_*), so L2 reuses the
+// calm L1 subset plus the quiet thinking animations as the "reading" tier.
+const IDLE1_POOL: &[&str] = &[
     "IDLE1_1", "IDLE1_3", "IDLE1_4", "IDLE1_5", "IDLE1_6", "IDLE1_7", "IDLE1_8", "IDLE1_9",
     "IDLE1_11", "IDLE1_12", "IDLE1_13", "IDLE1_14", "IDLE1_15", "IDLE1_21", "IDLE1_24",
-    "IDLE1_25", "IDLE1_26", "IDLE3_1", "IDLE3_2", "IDLE3_3", "BLINK", "BLINK", "BLINK",
-    "LOOKLEFT", "LOOKRIGHT", "LOOKUP", "LOOKDOWN", "THINKING", "PROCESSING", "HEARING1",
-    "HEARING2", "HEARING3", "HANDSBEHIND", "RESTPOSE", "SUGGEST",
+    "IDLE1_25", "IDLE1_26", "BLINK", "BLINK", "LOOKLEFT", "LOOKRIGHT", "LOOKUP", "LOOKDOWN",
+    "HEARING1", "HEARING2", "HEARING3", "RESTPOSE",
 ];
+const IDLE2_POOL: &[&str] = &[
+    "BLINK", "BLINK", "IDLE1_21", "IDLE1_24", "IDLE1_25", "IDLE1_26", "THINKING",
+    "PROCESSING", "HANDSBEHIND", "SUGGEST",
+];
+const IDLE3_POOL: &[&str] = &["IDLE3_1", "IDLE3_2", "IDLE3_3", "BLINK"];
 const FUN_POOL: &[&str] = &[
     "BANANA", "BANANAMISS", "JUGGLE", "BUTTERNUT", "GIGGLE", "DOMAGIC1", "DOMAGIC2", "WINK",
     "BLOWKISS", "HUG", "SURPRISED", "UNBELIEVABLE", "CONFUSED", "SAD", "WAVE", "CONGRATULATE",
@@ -91,6 +101,9 @@ pub struct Pet {
     pub frame_dur: Duration,
     hide_until: Option<Instant>,
     next_idle: Instant,
+    /// Progressive idle level (MS Agent IdlingLevel1→2→3, §3.1): advanced
+    /// per idle fire, reset by any interaction.
+    pub idle_level: u8,
     /// Original `tmrCharacterAction_Timer` fired actions only while the
     /// user was idle (time since last mouse/keyboard input, BONZI432_RE.md
     /// §2). Maintained by main from the X11 MIT-SCREEN-SAVER extension;
@@ -110,6 +123,14 @@ pub struct Pet {
     /// voice clips and idle gags are suppressed so nothing cuts off the
     /// answer being spoken. User menu actions still interrupt (user wins).
     chat_lock: Option<Instant>,
+}
+
+fn idle_pool(level: u8) -> &'static [&'static str] {
+    match level {
+        1 => IDLE1_POOL,
+        2 => IDLE2_POOL,
+        _ => IDLE3_POOL,
+    }
 }
 
 fn pick<'a>(pool: &'a [&'a str], fallback: &'a str) -> &'a str {
@@ -138,6 +159,7 @@ impl Pet {
             last_tick: now,
             walk_frac: 0.0,
             next_idle: now + Duration::from_secs(12),
+            idle_level: 1,
             user_idle: true,
             menu_open: false,
             hidden: false,
@@ -152,6 +174,9 @@ impl Pet {
     }
 
     pub fn push(&mut self, action: Action) {
+        // Any new request cancels the idle cycle (MS Agent §3.1: the idle
+        // levels persist "until canceled by any new animation request").
+        self.idle_level = 1;
         self.queue.push_back((action, Instant::now()));
     }
 
@@ -188,6 +213,8 @@ impl Pet {
     /// 14 s bubble cap), and locks out idle chatter until it has been read
     /// and spoken.
     pub fn chat_reply(&mut self, text: &str) {
+        // An agent answer is activity: the idle cycle resets to level 1.
+        self.idle_level = 1;
         self.queue.clear();
         self.dance_q.clear();
         self.walk_dir = 0;
@@ -228,8 +255,13 @@ impl Pet {
         self.looping = looping;
     }
 
-    /// Idle-gate input from the host (see `user_idle`).
+    /// Idle-gate input from the host (see `user_idle`). A user becoming
+    /// active again is an interaction: the progressive idle level resets so
+    /// the next idle period starts back at IdlingLevel1 (MS Agent §3.1).
     pub fn set_user_idle(&mut self, idle: bool) {
+        if self.user_idle && !idle {
+            self.idle_level = 1;
+        }
         self.user_idle = idle;
     }
 
@@ -495,6 +527,7 @@ impl Pet {
             if self.user_idle {
                 self.next_idle =
                     now + Duration::from_secs(5 + rand::rng().random_range(0..6) as u64);
+                let lvl = self.idle_level;
                 match rand::rng().random_range(1..=8u32) {
                     3 => self.tell_fact(content),
                     5 => self.tell_joke(content),
@@ -506,7 +539,7 @@ impl Pet {
                             self.start_walk();
                         } else {
                             let pool: &[&str] = if rand::rng().random_bool(0.75) {
-                                IDLE_POOL
+                                idle_pool(self.idle_level)
                             } else {
                                 FUN_POOL
                             };
@@ -517,6 +550,12 @@ impl Pet {
                         }
                     }
                 }
+                // Progressive idle (MS Agent §3.1): this period played at the
+                // current level; the next period escalates L1→L2→L3 and stays
+                // at L3 until an *external* interaction resets the counter.
+                // Captured `lvl` so the draw's own push() (joke/fact gags)
+                // doesn't count as that interaction.
+                self.idle_level = (lvl + 1).min(3);
             } else {
                 self.next_idle = now + Duration::from_secs(1);
             }
@@ -550,7 +589,7 @@ impl Pet {
         if !r.is_empty() && has_anim(&r) {
             self.anim = r;
         } else {
-            let a = pick(IDLE_POOL, "IDLE1_1");
+            let a = pick(idle_pool(self.idle_level), "IDLE1_1");
             self.anim = a.to_string();
         }
     }
@@ -750,11 +789,14 @@ mod tests {
             .expect("animations.json"),
         )
         .expect("valid json");
-        let mut reach: std::collections::HashSet<String> = IDLE_POOL
+        let mut reach: std::collections::HashSet<String> = IDLE1_POOL
             .iter()
-            .chain(FUN_POOL.iter())
-            .chain(PETTED_POOL.iter())
-            .chain(TALK_POOL.iter())
+            .copied()
+            .chain(IDLE2_POOL.iter().copied())
+            .chain(IDLE3_POOL.iter().copied())
+            .chain(FUN_POOL.iter().copied())
+            .chain(PETTED_POOL.iter().copied())
+            .chain(TALK_POOL.iter().copied())
             .map(|s| s.to_string())
             .collect();
         // Hardcoded triggers: hide/reveal, walking, sing's headphone loop.
@@ -843,5 +885,71 @@ mod tests {
                 "draw {i} must re-arm 5-10 ticks, got {rearm:?}"
             );
         }
+    }
+
+    /// Progressive idle levels (MS Agent §3.1): each idle period escalates
+    /// L1 → L2 → L3, L3 persists until canceled, and any interaction —
+    /// a queued request or the user becoming active again — resets to L1.
+    #[test]
+    fn idle_levels_escalate_and_reset_on_interaction() {
+        let c = content();
+        let mut p = Pet::new();
+        assert_eq!(p.idle_level, 1);
+        let fire = |p: &mut Pet| {
+            p.next_idle = Instant::now() - Duration::from_millis(1);
+            p.queue.clear();
+            p.walk_dir = 0;
+            p.bubble = None;
+            p.speaking = false;
+            p.looping = false;
+            p.tick(|_| true, |_, _| None, &c);
+        };
+        fire(&mut p);
+        assert_eq!(p.idle_level, 2, "second idle period escalates to L2");
+        fire(&mut p);
+        assert_eq!(p.idle_level, 3, "third period escalates to L3");
+        fire(&mut p);
+        fire(&mut p);
+        assert_eq!(p.idle_level, 3, "L3 persists until canceled");
+        // Any new request cancels the cycle (reset to L1).
+        p.push(Action::Animate("WINK".into()));
+        assert_eq!(p.idle_level, 1, "push resets the idle level");
+        fire(&mut p);
+        assert_eq!(p.idle_level, 2);
+        // User becoming active is an interaction too.
+        p.set_user_idle(false);
+        assert_eq!(p.idle_level, 1, "user activity resets the idle level");
+        // Returning to idle starts the cycle again from L1; staying idle
+        // (true→true) must not reset an escalating cycle.
+        p.set_user_idle(true);
+        fire(&mut p);
+        assert_eq!(p.idle_level, 2);
+        p.set_user_idle(true);
+        assert_eq!(p.idle_level, 2, "no spurious reset while idle state holds");
+    }
+
+    /// Pool shape: BLINK in L1+L2 like Merlin's STATEINFO, L3 is the sleepy
+    /// tier only, and the level lookup saturates at L3.
+    #[test]
+    fn idle_pools_are_progressive() {
+        assert!(IDLE1_POOL.contains(&"BLINK"), "L1 has blink");
+        assert!(IDLE2_POOL.contains(&"BLINK"), "L2 has blink (Merlin)");
+        assert!(
+            IDLE3_POOL.iter().all(|a| a.starts_with("IDLE3") || *a == "BLINK"),
+            "L3 is the sleepy tier"
+        );
+        assert!(
+            IDLE1_POOL.iter().all(|a| a.starts_with("IDLE1")
+                || matches!(
+                    *a,
+                    "BLINK" | "LOOKLEFT" | "LOOKRIGHT" | "LOOKUP" | "LOOKDOWN"
+                        | "HEARING1" | "HEARING2" | "HEARING3" | "RESTPOSE"
+                )),
+            "L1 is blink/glance tier"
+        );
+        assert_eq!(idle_pool(1), IDLE1_POOL);
+        assert_eq!(idle_pool(2), IDLE2_POOL);
+        assert_eq!(idle_pool(3), IDLE3_POOL);
+        assert_eq!(idle_pool(9), IDLE3_POOL, "level lookup saturates at L3");
     }
 }
