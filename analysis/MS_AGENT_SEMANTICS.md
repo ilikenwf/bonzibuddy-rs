@@ -372,7 +372,7 @@ semantics; user-idle gate ≈ §3.1 trigger). Concrete gaps, MS-Agent rule → f
    .LWV word marks; `\mrk` bookmarks fire at spoken position (§7). `tts.rs` has
    no timing feedback and `pet.rs` flaps the mouth on a fixed 110 ms cycle.
    *Suggestion*: without viseme access (espeak-ng), (a) set flap period from
-   wpm (~2 syllables/word ⇒ flap ≈ 60000/wpm/2 ms ≈ 77 ms at 156 wpm) instead
+   wpm (~2 syllables/word ⇒ flap ≈ 60000/wpm/2 ms ≈ 192 ms at 156 wpm) instead
    of 110 ms constant, and (b) use the word-reveal clock from (4) as a
    pseudo-`\mrk` bus so staged animations can swap mid-sentence at word
    boundaries. Keep the existing "voice interrupts voice, music survives"
