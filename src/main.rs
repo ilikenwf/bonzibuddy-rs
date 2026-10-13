@@ -139,9 +139,9 @@ fn save_state(window: Option<&Window>, scale: f64) {
 }
 
 /// System tray icon: left-click toggles visibility; the menu has
-/// "Show / Hide", "Reset Zoom" and "Quit". On Linux this needs libappindicator
-/// at runtime; returns `None` when the desktop offers no tray (Hide then
-/// auto-returns).
+/// "Show / Hide", "Reset Zoom", "Visit Bonzi.com (archived)" and "Quit".
+/// On Linux this needs libappindicator at runtime; returns `None` when the
+/// desktop offers no tray (Hide then auto-returns).
 fn make_tray(assets: &assets::Assets) -> Option<tray_icon::TrayIcon> {
     use tray_icon::menu::{Menu, MenuItem};
     use tray_icon::TrayIconBuilder;
@@ -172,8 +172,9 @@ fn make_tray(assets: &assets::Assets) -> Option<tray_icon::TrayIcon> {
     let menu = Menu::new();
     let toggle = MenuItem::with_id("toggle", "Show / Hide", true, None);
     let reset = MenuItem::with_id("reset-zoom", "Reset Zoom", true, None);
+    let visit = MenuItem::with_id("visit", "Visit Bonzi.com (archived)", true, None);
     let quit = MenuItem::with_id("quit", "Quit", true, None);
-    menu.append_items(&[&toggle, &reset, &quit]).ok()?;
+    menu.append_items(&[&toggle, &reset, &visit, &quit]).ok()?;
     TrayIconBuilder::new()
         .with_menu(Box::new(menu))
         .with_menu_on_left_click(false)
@@ -447,6 +448,28 @@ fn fork_ask() -> Result<(), std::io::Error> {
 
 
 
+/// The original Bonzi menu shipped a "Visit Bonzi.com" entry (ShellExecuteA
+/// to the company site). Ours opens the Wayback capture of the 1999 homepage
+/// in the user's browser — the app itself still never touches the network.
+const ARCHIVE_URL: &str = "https://web.archive.org/web/19991117023606/http://bonzi.com/";
+
+fn open_url(url: &str) {
+    #[cfg(target_os = "linux")]
+    let r = std::process::Command::new("xdg-open").arg(url).spawn();
+    #[cfg(target_os = "macos")]
+    let r = std::process::Command::new("open").arg(url).spawn();
+    #[cfg(windows)]
+    let r = std::process::Command::new("cmd").args(["/C", "start", "", url]).spawn();
+    #[cfg(not(any(target_os = "linux", target_os = "macos", windows)))]
+    let r: Result<std::process::Child, std::io::Error> = Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "no browser opener for this platform",
+    ));
+    if let Err(e) = r {
+        eprintln!("could not open browser for {url}: {e}");
+    }
+}
+
 struct MenuItem {
     label: &'static str,
     action: fn(&mut Pet, &content::Content),
@@ -463,6 +486,7 @@ const MENU: &[MenuItem] = &[
     MenuItem { label: "Ask Bonzi…", action: |_, _| {} },
     MenuItem { label: "Settings…", action: |_, _| {} },
     MenuItem { label: "Hide", action: |p, _c| p.hide() },
+    MenuItem { label: "Visit Bonzi.com (archived)", action: |_, _| open_url(ARCHIVE_URL) },
     MenuItem { label: "About", action: |p, _c| p.say(ABOUT, 12.0) },
     MenuItem { label: "Quit", action: |p, _c| p.push(Action::Quit) },
 ];
@@ -1341,6 +1365,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 match ev.id.0.as_str() {
                     "toggle" => toggle_visibility(&mut app),
                     "reset-zoom" => reset_zoom(&mut app),
+                    "visit" => open_url(ARCHIVE_URL),
                     "quit" => {
                         save_state(app.window.as_deref(), app.opts.scale);
                         el.exit();
