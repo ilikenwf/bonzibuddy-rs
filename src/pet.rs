@@ -123,6 +123,59 @@ pub struct Pet {
     /// voice clips and idle gags are suppressed so nothing cuts off the
     /// answer being spoken. User menu actions still interrupt (user wins).
     chat_lock: Option<Instant>,
+    /// AutoPace-style word reveal (MS Agent §7): words of the current
+    /// bubble revealed so far at the TTS rate, and the total.
+    bubble_words: usize,
+    bubble_words_total: usize,
+    bubble_start: Instant,
+    /// Words already reported through `take_new_words` (pseudo-`\mrk` bus).
+    words_reported: usize,
+    /// Return-before-next (MS Agent §4): deadline while a chained return
+    /// animation plays to its end before the queued request starts.
+    returning: Option<Instant>,
+}
+
+/// Per-character TTS speed compiled into the official .ACS files:
+/// 155–157 wpm (VOICEINFO, MS Agent §2/§7). Bonzi's clone uses the floor.
+pub const TTS_WPM: f64 = 155.0;
+
+/// Whitespace-delimited word count — the unit MS Agent paces bubbles in.
+pub fn words_in(text: &str) -> usize {
+    text.split_whitespace().count()
+}
+
+/// AutoPace reveal: how many words of a `total`-word bubble are visible
+/// after `elapsed` seconds at `wpm` words/min (0 before the first word
+/// lands — the balloon fills word by word, §7).
+pub fn reveal_words(wpm: f64, elapsed: f64, total: usize) -> usize {
+    if elapsed <= 0.0 {
+        return 0;
+    }
+    ((elapsed * wpm / 60.0) as usize).min(total)
+}
+
+/// AutoHide delay from *word* count (not char count): the time it takes to
+/// speak the text at TTS rate plus a 2 s grace period (MS Agent §7).
+pub fn bubble_hide_secs(words: usize) -> f64 {
+    2.0 + words as f64 * 60.0 / TTS_WPM
+}
+
+/// Mouth-flap period derived from the speech rate: ~2 syllables per word
+/// ⇒ 60000/wpm/2 ms ≈ 194 ms at 155 wpm (MS Agent §7; generic flapping —
+/// espeak-ng gives no viseme feedback).
+pub fn mouth_flap_ms(wpm: f64) -> u64 {
+    ((60000.0 / wpm / 2.0).round() as u64).max(40)
+}
+
+/// Whether a queued request is a visual content request: MS Agent plays the
+/// exit-branch return of the interrupted animation before these (Play/Speak
+/// classes), while movement/visibility/audio requests (Walk/Hide/Sound/
+/// Music/Quit) cut through — the StopAll class split of §4.
+fn chains_return(action: &Action) -> bool {
+    matches!(
+        action,
+        Action::Animate(_) | Action::AnimateLoop(_, _) | Action::Speak(_) | Action::Tell(_, _) | Action::DanceSeq(_)
+    )
 }
 
 fn idle_pool(level: u8) -> &'static [&'static str] {
@@ -170,6 +223,11 @@ impl Pet {
             music_on: false,
             dance_q: VecDeque::new(),
             chat_lock: None,
+            bubble_words: 0,
+            bubble_words_total: 0,
+            bubble_start: now,
+            words_reported: 0,
+            returning: None,
         }
     }
 
@@ -193,9 +251,16 @@ impl Pet {
         pool[rand::rng().random_range(0..pool.len())].clone()
     }
 
-    fn bubble_now(&mut self, text: String, secs: f64) {
-        let secs = secs.min(14.0);
+    fn bubble_now(&mut self, text: String, min_secs: f64) {
+        // AutoHide derived from *word count* at the TTS rate (MS Agent §7),
+        // with the caller's secs as a floor; the classic 14 s cap stays.
+        let words = words_in(&text);
+        let secs = min_secs.max(bubble_hide_secs(words)).min(14.0);
         self.bubble = Some(text);
+        self.bubble_words_total = words;
+        self.bubble_words = 0;
+        self.words_reported = 0;
+        self.bubble_start = Instant::now();
         self.bubble_until = Some(Instant::now() + Duration::from_secs_f64(secs));
         self.speaking = true;
         // Every bubble is speech: TTS (when enabled) must voice all of them,
@@ -208,21 +273,66 @@ impl Pet {
         self.bubble_now(text.to_string(), secs);
     }
 
+    /// The AutoPace-revealed prefix of the current bubble: the first
+    /// `bubble_words` words of the text (empty until the first word lands).
+    pub fn bubble_visible(&self) -> Option<&str> {
+        let b = self.bubble.as_deref()?;
+        if self.bubble_words >= self.bubble_words_total {
+            return Some(b);
+        }
+        if self.bubble_words == 0 {
+            return Some("");
+        }
+        let mut seen = 0usize;
+        let mut in_word = false;
+        for (i, c) in b.char_indices() {
+            if c.is_whitespace() {
+                if in_word {
+                    seen += 1;
+                    if seen >= self.bubble_words {
+                        return Some(&b[..i]);
+                    }
+                    in_word = false;
+                }
+            } else {
+                in_word = true;
+            }
+        }
+        Some(b)
+    }
+
+    /// Pseudo-`\mrk` bus (MS Agent §7): the number of bubble words revealed
+    /// since the last call — the hook for word-boundary-synchronous actions
+    /// such as mid-speech animation swaps.
+    pub fn take_new_words(&mut self) -> usize {
+        let d = self.bubble_words.saturating_sub(self.words_reported);
+        self.words_reported = self.bubble_words;
+        d
+    }
+
+
     /// An agent answer: highest-priority speech. Drops any queued gag so a
     /// half-queued joke can't cut the reply off, shows the full answer (no
     /// 14 s bubble cap), and locks out idle chatter until it has been read
-    /// and spoken.
-    pub fn chat_reply(&mut self, text: &str) {
+    /// and spoken. Spoken≠shown split — MS Agent's `\map="spoken"="balloon"`
+    /// (§7): the balloon shows `shown` while TTS voices `spoken`.
+    pub fn chat_reply_split(&mut self, shown: &str, spoken: &str) {
         // An agent answer is activity: the idle cycle resets to level 1.
         self.idle_level = 1;
         self.queue.clear();
         self.dance_q.clear();
         self.walk_dir = 0;
-        let secs = (4.0 + text.chars().count() as f64 * 0.09).min(60.0);
-        self.bubble = Some(text.to_string());
+        self.returning = None;
+        let words = words_in(shown);
+        let secs = bubble_hide_secs(words).min(60.0);
+        self.bubble = Some(shown.to_string());
+        self.bubble_words_total = words;
+        self.bubble_words = 0;
+        self.words_reported = 0;
+        self.bubble_start = Instant::now();
         self.bubble_until = Some(Instant::now() + Duration::from_secs_f64(secs));
         self.speaking = true;
-        self.pending.push(Effect::SpeakTts(text.to_string()));
+        self.pending.push(Effect::SpeakTts(spoken.to_string()));
         // Lock a little past the bubble: TTS usually outlives the text timer.
         self.chat_lock = Some(Instant::now() + Duration::from_secs_f64(secs + 2.0));
     }
@@ -355,11 +465,14 @@ impl Pet {
     }
 
     /// Advance animation/bubble/personality clocks.
-    /// `audio_of(anim, frame)` maps a frame to its original voice clip.
+    /// `audio_of(anim, frame)` maps a frame to its original voice clip;
+    /// `has_mouth(anim)` says whether the animation carries mouth overlays
+    /// (i.e. is speakable — MS Agent §7 speech selection).
     /// Returns (window_dx_from_walk, effects).
     pub fn tick(
         &mut self,
         has_anim: impl Fn(&str) -> bool,
+        has_mouth: impl Fn(&str) -> bool,
         audio_of: impl Fn(&str, usize) -> Option<String>,
         content: &Content,
     ) -> (i32, Vec<Effect>) {
@@ -369,49 +482,80 @@ impl Pet {
         let mut dx = 0i32;
 
         // drain queue (one action per tick keeps pacing natural)
-        if let Some((action, _)) = self.queue.pop_front() {
-            // A new action always cuts off whatever was playing before.
-            self.pending.push(Effect::StopAll);
-            match action {
-                Action::Animate(a) if has_anim(&a) => { self.walk_dir = 0; self.set_anim(&a, false); }
-                Action::AnimateLoop(a, ms) if has_anim(&a) => {
-                    self.walk_dir = 0;
-                    self.set_anim(&a, true);
-                    self.loop_until = Some(now + Duration::from_millis(ms));
-                }
-                Action::DanceSeq(seq) => {
-                    self.walk_dir = 0;
-                    self.loop_until = None;
-                    self.dance_q = seq.into_iter().filter(|a| has_anim(a)).collect();
-                    if let Some(first) = self.dance_q.pop_front() {
-                        self.set_anim(&first, false);
+        // Return-before-next (MS Agent §4): when a visual request arrives
+        // while a non-looping animation that has a return is playing, the
+        // return plays first and the request waits behind it — the exit
+        // transition is never cut off. Asset limitation: the manifest carries
+        // no per-frame exit_to (acs_parse.py reads it from .acs), so the
+        // return animation is chained, not fast-forwarded.
+        if self.returning.is_some_and(|until| now >= until) {
+            self.returning = None; // safety: return anim never finished
+        }
+        if self.returning.is_none() {
+            if let Some((action, _)) = self.queue.front().cloned() {
+                let ret = return_of(&self.anim);
+                if chains_return(&action) && !self.looping && !ret.is_empty() && has_anim(&ret) {
+                    self.set_anim(&ret, false);
+                    self.returning = Some(now + Duration::from_secs(4));
+                } else {
+                    self.queue.pop_front();
+                    // A new action always cuts off whatever was playing before.
+                    self.pending.push(Effect::StopAll);
+                    match action {
+                        Action::Animate(a) if has_anim(&a) => { self.walk_dir = 0; self.set_anim(&a, false); }
+                        Action::AnimateLoop(a, ms) if has_anim(&a) => {
+                            self.walk_dir = 0;
+                            self.set_anim(&a, true);
+                            self.loop_until = Some(now + Duration::from_millis(ms));
+                        }
+                        Action::DanceSeq(seq) => {
+                            self.walk_dir = 0;
+                            self.loop_until = None;
+                            self.dance_q = seq.into_iter().filter(|a| has_anim(a)).collect();
+                            if let Some(first) = self.dance_q.pop_front() {
+                                self.set_anim(&first, false);
+                            }
+                        }
+                        Action::Speak(t) => {
+                            // Speak-over-last-animation (MS Agent §7): speak
+                            // over the current animation if it has mouth
+                            // overlays, else the Speaking-state fallback.
+                            if !has_mouth(&self.anim) && has_anim("RESTPOSE") {
+                                self.set_anim("RESTPOSE", false);
+                            }
+                            self.bubble_now(t, 2.0);
+                        }
+                        Action::Tell(anim, t) => {
+                            // Speak over the requested gesture when it is
+                            // speakable (mouth overlays); otherwise the
+                            // Speaking-state fallback (RestPose + overlays).
+                            if has_anim(&anim) && has_mouth(&anim) {
+                                self.set_anim(&anim, false);
+                            } else if has_anim("RESTPOSE") {
+                                self.set_anim("RESTPOSE", false);
+                            } else if has_anim(&anim) {
+                                self.set_anim(&anim, false);
+                            }
+                            self.bubble_now(t, 2.0);
+                        }
+                        Action::Sound(s) => self.pending.push(Effect::PlaySound(s)),
+                        Action::Music(name) => {
+                            self.music_on = true;
+                            self.pending.push(Effect::PlayMusic(name));
+                        }
+                        Action::Walk(d) => {
+                            self.walk_dir = d.clamp(-1, 1);
+                            if self.walk_dir != 0 {
+                                self.walk_until = Some(now + Duration::from_secs(6));
+                                let a = if self.walk_dir < 0 { "MOVELEFT" } else { "MOVERIGHT" };
+                                if has_anim(a) { self.set_anim(a, true); }
+                            }
+                        }
+                        Action::Hide => self.hide_now(),
+                        Action::Quit => self.pending.push(Effect::Quit),
+                        _ => {}
                     }
                 }
-                Action::Speak(t) => {
-                    let d = 2.5 + t.len() as f64 * 0.05;
-                    self.bubble_now(t, d);
-                }
-                Action::Tell(anim, t) => {
-                    if has_anim(&anim) { self.set_anim(&anim, false); }
-                    let d = 2.5 + t.len() as f64 * 0.05;
-                    self.bubble_now(t, d);
-                }
-                Action::Sound(s) => self.pending.push(Effect::PlaySound(s)),
-                Action::Music(name) => {
-                    self.music_on = true;
-                    self.pending.push(Effect::PlayMusic(name));
-                }
-                Action::Walk(d) => {
-                    self.walk_dir = d.clamp(-1, 1);
-                    if self.walk_dir != 0 {
-                        self.walk_until = Some(now + Duration::from_secs(6));
-                        let a = if self.walk_dir < 0 { "MOVELEFT" } else { "MOVERIGHT" };
-                        if has_anim(a) { self.set_anim(a, true); }
-                    }
-                }
-                Action::Hide => self.hide_now(),
-                Action::Quit => self.pending.push(Effect::Quit),
-                _ => {}
             }
         }
 
@@ -424,8 +568,20 @@ impl Pet {
                 self.mouth = 0;
             }
         }
-        // mouth flap cycle while speaking
-        if self.speaking && now.duration_since(self.mouth_at).as_millis() > 110 {
+        // AutoPace word reveal (MS Agent §7): the bubble fills word by word
+        // at the TTS rate; the reveal clock is also the pseudo-`\mrk` bus.
+        if self.bubble.is_some() {
+            self.bubble_words = reveal_words(
+                TTS_WPM,
+                now.duration_since(self.bubble_start).as_secs_f64(),
+                self.bubble_words_total,
+            );
+        }
+        // Mouth flap cycle while speaking — period derived from the speech
+        // rate (~2 syllables/word), not a fixed constant (§7).
+        if self.speaking
+            && now.duration_since(self.mouth_at).as_millis() >= mouth_flap_ms(TTS_WPM) as u128
+        {
             self.mouth_at = now;
             self.mouth = match self.mouth {
                 1 => 3, 2 => 4, 3 => 2, _ => 1,
@@ -566,6 +722,11 @@ impl Pet {
     /// Called by main when the current animation's last frame ends.
     pub fn anim_finished(&mut self, has_anim: impl Fn(&str) -> bool, ret: Option<&str>) {
         self.frame = 0;
+        if self.returning.take().is_some() {
+            // The chained return animation (§4) just ended: the queued
+            // request it was guarding plays on the next tick.
+            return;
+        }
         if self.looping {
             return;
         }
@@ -659,7 +820,7 @@ mod tests {
         // drain the queue like the main loop does; tick() returns the effects
         let mut seen = Vec::new();
         while !p.queue.is_empty() {
-            let (_, effects) = p.tick(|_| true, |_, _| None, &c);
+            let (_, effects) = p.tick(|_| true, |_| true, |_, _| None, &c);
             seen.extend(effects.into_iter().filter(|e| matches!(e, Effect::SpeakTts(_))));
         }
         assert_eq!(seen.len(), 1, "joke must voice exactly once");
@@ -686,7 +847,7 @@ mod tests {
         let mut fired: Vec<String> = Vec::new();
         let mut stop_all = 0;
         for _ in 0..10 {
-            let (_, e) = p.tick(|_| true, audio, &c);
+            let (_, e) = p.tick(|_| true, |_| true, audio, &c);
             for eff in e {
                 match eff {
                     Effect::PlaySound(s) => fired.push(s),
@@ -708,7 +869,7 @@ mod tests {
         p.pending.clear();
         p.frame_dur = Duration::ZERO;
         p.push(Action::Animate("HUG".into())); // would cut the reply off
-        p.chat_reply("the model's fine answer");
+        p.chat_reply_split("the model's fine answer", "the model's fine answer");
         p.pending.clear(); // main dispatches the reply's own SpeakTts here
         assert!(p.queue.is_empty(), "queued gag must be dropped");
         assert_eq!(p.bubble.as_deref(), Some("the model's fine answer"));
@@ -722,7 +883,7 @@ mod tests {
         // Many frames past the clip's trigger frame: nothing may fire.
         let mut noisy = Vec::new();
         for _ in 0..40 {
-            let (_, e) = p.tick(|_| true, audio, &c);
+            let (_, e) = p.tick(|_| true, |_| true, audio, &c);
             noisy.extend(e.into_iter().filter(|e| {
                 matches!(e, Effect::PlaySound(_) | Effect::SpeakTts(_) | Effect::StopAll)
             }));
@@ -751,12 +912,18 @@ mod tests {
         let c = content();
         let mut p = Pet::new();
         p.dance();
-        // Drain the three queued actions (DanceSeq, Music, Speak).
+        // Drain the three queued actions (DanceSeq, Music, Speak). The
+        // Speak request interrupts MOVEUP mid-play, so its return chains
+        // first (MS Agent §4 return-before-next).
         for _ in 0..3 {
-            p.tick(|_| true, |_, _| None, &c);
+            p.tick(|_| true, |_| true, |_, _| None, &c);
         }
-        assert_eq!(p.anim, "MOVEUP", "first move starts");
+        assert_eq!(p.anim, "MOVEUPRETURN", "return chains before the Speak");
         assert!(p.music_on);
+        // The return finishing releases the Speak request.
+        p.anim_finished(|_| true, None);
+        p.tick(|_| true, |_| true, |_, _| None, &c);
+        assert!(p.bubble.is_some(), "Speak plays after the return");
         let n = p.dance_q.len();
         // One finish per move: the last one (empty queue) ends the music.
         for _ in 0..n + 1 {
@@ -864,7 +1031,7 @@ mod tests {
         // it re-arms a ~1 s re-check (tmrCharacterAction idle gate).
         p.set_user_idle(false);
         p.next_idle = Instant::now() - Duration::from_millis(1);
-        let (_, e) = p.tick(|_| true, |_, _| None, &c);
+        let (_, e) = p.tick(|_| true, |_| true, |_, _| None, &c);
         assert!(e.is_empty() && p.queue.is_empty(), "no action while the user is active");
         let recheck = p.next_idle.saturating_duration_since(Instant::now());
         assert!(recheck < Duration::from_secs(3), "active gate re-checks quickly: {recheck:?}");
@@ -878,7 +1045,7 @@ mod tests {
             p.bubble = None;
             p.speaking = false;
             p.looping = false;
-            p.tick(|_| true, |_, _| None, &c);
+            p.tick(|_| true, |_| true, |_, _| None, &c);
             let rearm = p.next_idle.saturating_duration_since(Instant::now());
             assert!(
                 rearm > Duration::from_secs(4) && rearm < Duration::from_secs(11),
@@ -902,7 +1069,7 @@ mod tests {
             p.bubble = None;
             p.speaking = false;
             p.looping = false;
-            p.tick(|_| true, |_, _| None, &c);
+            p.tick(|_| true, |_| true, |_, _| None, &c);
         };
         fire(&mut p);
         assert_eq!(p.idle_level, 2, "second idle period escalates to L2");
@@ -951,5 +1118,121 @@ mod tests {
         assert_eq!(idle_pool(2), IDLE2_POOL);
         assert_eq!(idle_pool(3), IDLE3_POOL);
         assert_eq!(idle_pool(9), IDLE3_POOL, "level lookup saturates at L3");
+    }
+
+    /// AutoPace math (§7): reveal at the compiled TTS rate, hide delay from
+    /// *word* count, not char count.
+    #[test]
+    fn bubble_pacing_math_matches_wpm() {
+        assert_eq!(words_in(" one  two\nthree "), 3);
+        assert_eq!(reveal_words(TTS_WPM, 0.0, 10), 0, "empty until the first word");
+        assert_eq!(reveal_words(TTS_WPM, 1.0, 100), 2, "155 wpm ⇒ 2 words in 1 s");
+        assert_eq!(reveal_words(TTS_WPM, 60.0, 7), 7, "reveal caps at total");
+        assert!((bubble_hide_secs(31) - 14.0).abs() < 1e-9, "31 words = 12 s + 2 s grace");
+        assert!((bubble_hide_secs(0) - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn bubble_reveals_word_prefix() {
+        let c = content();
+        let mut p = Pet::new();
+        p.say("one two three four five", 2.0);
+        assert_eq!(p.bubble_visible(), Some(""));
+        p.bubble_start = Instant::now() - Duration::from_secs_f64(1.0);
+        p.tick(|_| true, |_| true, |_, _| None, &c);
+        assert_eq!(p.bubble_visible(), Some("one two"));
+        p.bubble_until = None;
+        p.bubble_start = Instant::now() - Duration::from_secs(60);
+        p.tick(|_| true, |_| true, |_, _| None, &c);
+        assert_eq!(p.bubble_visible(), Some("one two three four five"));
+    }
+
+    #[test]
+    fn chat_reply_hide_scales_with_word_count() {
+        let mut p = Pet::new();
+        p.chat_reply_split("a b c", "a b c");
+        let life = p.bubble_until.unwrap().duration_since(p.bubble_start).as_secs_f64();
+        assert!((life - bubble_hide_secs(3)).abs() < 0.05, "word-derived hide delay");
+    }
+
+    /// Pseudo-`\mrk` bus: word boundaries are observable as deltas.
+    #[test]
+    fn word_bus_reports_newly_revealed_words() {
+        let c = content();
+        let mut p = Pet::new();
+        p.chat_reply_split("one two three four five six", "one two three four five six");
+        p.bubble_start = Instant::now() - Duration::from_secs_f64(1.0); // ~2.58 words
+        p.tick(|_| true, |_| true, |_, _| None, &c);
+        assert_eq!(p.take_new_words(), 2);
+        assert_eq!(p.take_new_words(), 0, "bus drains");
+    }
+
+    /// MS Agent §7: Speak re-uses the last played animation when it has
+    /// mouth overlays, else the Speaking-state fallback (RestPose).
+    #[test]
+    fn speak_over_last_animation_selection() {
+        let c = content();
+        let anims = |a: &str| matches!(a, "EXPLAIN" | "SUGGEST" | "RESTPOSE" | "BLINK" | "HUG");
+        let mouth = |a: &str| a == "EXPLAIN" || a == "HUG";
+        let mut p = Pet::new();
+        // Tell over a speakable gesture: the gesture plays, overlays ride it.
+        p.push(Action::Tell("EXPLAIN".into(), "hi there".into()));
+        p.tick(anims, mouth, |_, _| None, &c);
+        assert_eq!(p.anim, "EXPLAIN");
+        // Tell over a gesture without overlays: Speaking fallback.
+        p.push(Action::Tell("SUGGEST".into(), "hi there".into()));
+        p.tick(anims, mouth, |_, _| None, &c);
+        assert_eq!(p.anim, "RESTPOSE");
+        // Bare Speak keeps a speakable current animation…
+        p.set_anim("HUG", false);
+        p.push(Action::Speak("hi there".into()));
+        p.tick(anims, mouth, |_, _| None, &c);
+        assert_eq!(p.anim, "HUG");
+        // …and falls back when the current one has no overlays.
+        p.set_anim("BLINK", false);
+        p.push(Action::Speak("hi there".into()));
+        p.tick(anims, mouth, |_, _| None, &c);
+        assert_eq!(p.anim, "RESTPOSE");
+    }
+
+    /// MS Agent §4: a queued request that interrupts a non-looping
+    /// animation with a return plays that return first.
+    #[test]
+    fn return_chains_before_interrupting_request() {
+        let c = content();
+        let mut p = Pet::new();
+        p.set_anim("READCONTINUED", false);
+        p.push(Action::Animate("WINK".into()));
+        let (_, e) = p.tick(|_| true, |_| true, |_, _| None, &c);
+        assert_eq!(p.anim, "READRETURN", "exit return plays first");
+        assert_eq!(p.queue.len(), 1, "request waits behind the return");
+        assert!(e.is_empty(), "chaining alone must not cut audio");
+        p.anim_finished(|_| true, None); // the return ends
+        p.tick(|_| true, |_| true, |_, _| None, &c);
+        assert_eq!(p.anim, "WINK", "queued request plays after the return");
+        assert!(p.queue.is_empty());
+    }
+
+    #[test]
+    fn looping_and_movement_requests_do_not_chain() {
+        let c = content();
+        let mut p = Pet::new();
+        // Looping animations block the queue until Stop — no exit branch (§4).
+        p.set_anim("MOVELEFT", true);
+        p.push(Action::Animate("WINK".into()));
+        p.tick(|_| true, |_| true, |_, _| None, &c);
+        assert_eq!(p.anim, "WINK");
+        // Walk is a movement-class request: cuts through without a return.
+        p.set_anim("READCONTINUED", false);
+        p.push(Action::Walk(1));
+        p.tick(|_| true, |_| true, |_, _| None, &c);
+        assert_ne!(p.walk_dir, 0, "walk cuts through");
+    }
+
+    #[test]
+    fn mouth_flap_period_derived_from_wpm() {
+        // ~2 syllables/word at the compiled 155 wpm ⇒ 60000/155/2 ≈ 194 ms.
+        assert_eq!(mouth_flap_ms(TTS_WPM), 194);
+        assert_eq!(mouth_flap_ms(310.0), 97, "faster speech, faster flap");
     }
 }

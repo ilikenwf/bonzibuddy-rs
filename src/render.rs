@@ -103,6 +103,23 @@ impl Canvas {
     }
 }
 
+/// MS Agent BALLOONINFO defaults (§2/§7): 2 lines, `#FFFFE1` background,
+/// black text and border. The original font is MS Sans Serif −13/400; the
+/// clone's 15 px default scale is the closest match already in use.
+pub const BALLOON_BG: [u8; 4] = [0xFF, 0xFF, 0xE1, 0xFF];
+pub const BALLOON_FG: [u8; 4] = [0, 0, 0, 255];
+pub const BALLOON_LINES: usize = 2;
+
+/// AutoPace scrolling (§7): a balloon shows at most `BALLOON_LINES` lines;
+/// longer revealed text scrolls — the newest (last) lines win.
+pub fn balloon_window(lines: &[String]) -> &[String] {
+    if lines.len() > BALLOON_LINES {
+        &lines[lines.len() - BALLOON_LINES..]
+    } else {
+        lines
+    }
+}
+
 /// Word-wrap `text` into lines fitting `max_w` pixels.
 pub fn wrap(font: &FontArc, text: &str, max_w: f32, scale: PxScale) -> Vec<String> {
     let sf = font.as_scaled(scale);
@@ -218,5 +235,19 @@ mod blit_tests {
         // non-premultiplied interp would store 150*191/255 = 112 (bleed).
         let o = 1 * 4;
         assert!(canvas.px[o] >= 140, "red must not darken by bleed: {:?}", &canvas.px[o..o + 4]);
+    }
+
+    /// The balloon is a 2-line window on `#FFFFE1` (BALLOONINFO defaults);
+    /// longer revealed text scrolls so the newest lines stay visible.
+    #[test]
+    fn balloon_scrolls_to_newest_lines() {
+        assert_eq!(BALLOON_BG, [0xFF, 0xFF, 0xE1, 0xFF]);
+        assert_eq!(BALLOON_LINES, 2);
+        let lines: Vec<String> = (0..5).map(|i| format!("l{i}")).collect();
+        assert_eq!(balloon_window(&lines), &["l3", "l4"]);
+        let two: Vec<String> = vec!["a".into(), "b".into()];
+        assert_eq!(balloon_window(&two), &two[..]);
+        let one: Vec<String> = vec!["a".into()];
+        assert_eq!(balloon_window(&one), &one[..]);
     }
 }

@@ -774,18 +774,22 @@ impl App {
                 self.menu_rects.push((i, (bx, by, bw, bh)));
                 by += bh + gap;
             }
-        } else if let Some(bubble) = self.pet.bubble.clone() {
+        } else if let Some(bubble) = self.pet.bubble_visible().map(str::to_string) {
+            // AutoPace: only the revealed word prefix is drawn, wrapped into
+            // the 2-line #FFFFE1 balloon; overflow scrolls to the newest
+            // lines (MS Agent §7).
             let max_w = (w as f32) - (24.0 * s) as f32;
-            let lines = render::wrap(&self.assets.font, &bubble, max_w, scale);
+            let wrapped = render::wrap(&self.assets.font, &bubble, max_w, scale);
+            let lines = render::balloon_window(&wrapped);
             let th = lines.len() as f32 * lh;
             let bw = (w as i32) - 16;
             let bh = (th + (16.0 * s) as f32) as i32;
             let bx = 8;
             let by = (sy as f32 - bh as f32 - 6.0).max(4.0) as i32;
-            canvas.round_rect(bx, by, bw, bh, 10, [0xFF, 0xFF, 0xCC, 255], [0, 0, 0, 255]);
+            canvas.round_rect(bx, by, bw, bh, 10, render::BALLOON_BG, [0, 0, 0, 255]);
             let mut ty = by as f32 + lh;
-            for line in &lines {
-                render::draw_line(&mut canvas, &self.assets.font, line, bx as f32 + (10.0 * s) as f32, ty, scale, [0, 0, 0, 255]);
+            for line in lines {
+                render::draw_line(&mut canvas, &self.assets.font, line, bx as f32 + (10.0 * s) as f32, ty, scale, render::BALLOON_FG);
                 ty += lh;
             }
         }
@@ -1174,8 +1178,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let prev_walk = pet.walk_dir;
                         let idle_secs = user_idle_secs();
                         pet.set_user_idle(idle_secs.map(|s| s >= 5).unwrap_or(true));
-                        let (dx, effects) =
-                            pet.tick(|a| assets.has(a), |a, f| assets.frame_audio(a, f), content);
+                        let (dx, effects) = pet.tick(
+                            |a| assets.has(a),
+                            |a| assets.has_mouth(a),
+                            |a, f| assets.frame_audio(a, f),
+                            content,
+                        );
+                        // Pseudo-\mrk bus (MS Agent §7): at a word boundary
+                        // of the speech being shown, swap the neutral
+                        // RestPose fallback for a speakable gesture —
+                        // mid-speech animation swap at a word position.
+                        if pet.take_new_words() > 0 && pet.anim == "RESTPOSE" {
+                            pet.set_anim("EXPLAIN", false);
+                        }
                         if dx == 0 && prev_walk != 0 {
                             // walk just finished: remember where we ended up
                             save_state(window.as_deref(), opts.scale);
@@ -1228,12 +1243,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // Model may steer the body with [anim:NAME]; the
                         // marker is stripped before the text is spoken.
                         let (text, stage) = agent::parse_stage(&text);
+                        // \map="spoken"="balloon" (MS Agent §7): TTS gets
+                        // the spoken variant, the balloon shows the other.
+                        let (spoken, shown) = agent::parse_map(&text);
                         let was_idle = app.pet.is_idle();
-                        app.pet.chat_reply(&text);
+                        app.pet.chat_reply_split(&shown, &spoken);
                         match stage {
                             Some(s) => app.pet.stage(&s),
-                            None if was_idle => app.pet.set_anim("EXPLAIN", false),
-                            _ => {}
+                            None => {
+                                // Speak-over-last-animation (§7): keep the
+                                // current animation only if it has mouth
+                                // overlays; otherwise the RestPose fallback
+                                // (an idle Bonzi answers with EXPLAIN).
+                                if was_idle {
+                                    app.pet.set_anim("EXPLAIN", false);
+                                } else if !app.assets.has_mouth(&app.pet.anim) {
+                                    app.pet.set_anim("RESTPOSE", false);
+                                }
+                            }
                         }
                         let fx = std::mem::take(&mut app.pet.pending);
                         app.dispatch_effects(fx, el);

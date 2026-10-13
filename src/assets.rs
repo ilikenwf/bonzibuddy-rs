@@ -184,6 +184,15 @@ impl Assets {
         None
     }
 
+    /// True if any frame of the animation carries a mouth overlay, i.e. it
+    /// is "speakable" — MS Agent §7: Speak re-uses the last played animation
+    /// only when it has mouth overlays, else the Speaking-state fallback.
+    pub fn has_mouth(&self, anim: &str) -> bool {
+        self.anims
+            .get(anim)
+            .is_some_and(|a| a.frames.iter().any(|f| !f.mouth.is_empty()))
+    }
+
     pub fn has(&self, anim: &str) -> bool {
         self.anims.contains_key(anim)
     }
