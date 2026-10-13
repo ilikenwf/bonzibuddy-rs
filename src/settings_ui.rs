@@ -4,13 +4,35 @@
 //! this child window is managed, gets focus normally, and implements full
 //! text editing (caret, arrows, Home/End, Delete, Backspace).
 //!
+//! Visual design: a Win95/Bonzi-era property sheet drawn with the reusable
+//! [`crate::retro`] theme (button-face gray, 2px 3D bevels, chunky
+//! checkboxes/radios, tab strip, OK/Cancel default-button row, sunken
+//! status bar). The tab taxonomy mirrors the original BonziBuddy options
+//! dialog recovered from the 2004 engine string table
+//! (`analysis/extracted2/6`: General / Personality / Voice / Privacy /
+//! Registration / E-Mail Account). All functional settings of this fork
+//! live on **General**; the original tabs that were network- or
+//! phone-home-shaped (Privacy telemetry opt-outs, Registration upload,
+//! E-Mail account — see `analysis/BONZI432_RE.md` §3) are rendered as
+//! visibly **disabled** period-plausible controls marked "(retired)" and
+//! are NOT functional here: this build has a zero-network invariant, so
+//! those controls must never come back to life. Personality/Voice controls
+//! are likewise shown disabled — the fork has no personality/voice
+//! settings to back them, and inventing fake ones would be worse than an
+//! honest retired tab.
+//!
+//! The window is WM-managed, so the title bar is drawn by the window
+//! manager; retro title-bar styling (retro::TITLE_A/TITLE_B gradient) is
+//! only usable by repos that draw their own chrome.
+//!
 //! Run as: `bonzibuddy-rs --settings-ui`. On Save it writes the config file
 //! and exits; the pet notices via mtime and reloads.
 
 use crate::assets;
-use crate::render;
 use crate::Config;
-use ab_glyph::PxScale;
+use crate::render::{self, Canvas};
+use crate::retro;
+use ab_glyph::FontArc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use winit::dpi::LogicalSize;
@@ -20,8 +42,17 @@ use winit::keyboard::{Key, NamedKey};
 use winit::window::{Window, WindowAttributes};
 
 const W: u32 = 460;
-const H: u32 = 300;
+const H: u32 = 396;
+const ASK_H: u32 = 220;
 const FIELDS: [&str; 3] = ["API endpoint (blank = offline)", "API key", "Model"];
+/// Original options-dialog tabs, recovered from the 2004 engine strings.
+const TABS: [&str; 6] = ["General", "Personality", "Voice", "Privacy", "Registration", "E-Mail Account"];
+
+type Rect = (i32, i32, i32, i32);
+
+fn in_rect(r: &Rect, x: f64, y: f64) -> bool {
+    x >= r.0 as f64 && x < (r.0 + r.2) as f64 && y >= r.1 as f64 && y < (r.1 + r.3) as f64
+}
 
 struct Ui {
     assets: assets::Assets,
@@ -32,8 +63,12 @@ struct Ui {
     window: Option<Arc<Window>>,
     pixels: Option<pixels::Pixels<'static>>,
     size: (u32, u32),
-    rects: Vec<(i32, i32, i32, i32)>,
-    save_rect: (i32, i32, i32, i32),
+    rects: Vec<Rect>,
+    tab_rects: Vec<Rect>,
+    ok_rect: Rect,
+    cancel_rect: Rect,
+    tab: usize,
+    quit: bool,
     status: String,
     mouse_pos: (f64, f64),
     /// Ask mode: one question field + Ask button (writes the ask file).
@@ -99,16 +134,30 @@ impl Ui {
     }
 
     fn click(&mut self, x: f64, y: f64) {
-        for (i, (rx, ry, rw, rh)) in self.rects.iter().enumerate() {
-            if x >= *rx as f64 && x < (rx + rw) as f64 && y >= *ry as f64 && y < (ry + rh) as f64 {
-                self.sel = i;
-                self.caret = self.fields[i].chars().count();
-                return;
+        if !self.ask {
+            for (i, r) in self.tab_rects.iter().enumerate() {
+                if in_rect(r, x, y) {
+                    self.tab = i;
+                    return;
+                }
             }
         }
-        let (rx, ry, rw, rh) = self.save_rect;
-        if x >= rx as f64 && x < (rx + rw) as f64 && y >= ry as f64 && y < (ry + rh) as f64 {
+        if self.tab == 0 {
+            for (i, r) in self.rects.iter().enumerate() {
+                if in_rect(r, x, y) {
+                    self.sel = i;
+                    self.caret = self.fields[i].chars().count();
+                    return;
+                }
+            }
+        }
+        if in_rect(&self.ok_rect, x, y) {
             self.save();
+            self.quit = true;
+            return;
+        }
+        if in_rect(&self.cancel_rect, x, y) {
+            self.quit = true;
         }
     }
 
@@ -119,80 +168,193 @@ impl Ui {
     ) -> Option<pixels::Pixels<'static>> {
         let st = pixels::SurfaceTexture::new(w, h, window.clone());
         pixels::PixelsBuilder::new(w, h, st)
-            .clear_color(pixels::wgpu::Color { r: 0.96, g: 0.96, b: 0.93, a: 1.0 })
+            .clear_color(pixels::wgpu::Color { r: 0.75, g: 0.75, b: 0.75, a: 1.0 })
             .build()
             .ok()
+    }
+
+    /// Draw one editable field row (label + sunken edit + caret) and
+    /// record its hit rect.
+    fn edit_row(
+        &mut self,
+        canvas: &mut Canvas,
+        font: &FontArc,
+        t: &retro::Theme,
+        label_txt: &str,
+        i: usize,
+        x: i32,
+        y: f32,
+        w: i32,
+    ) -> f32 {
+        let s = t.s;
+        let scale = t.scale();
+        let lh = render::line_height(font, scale);
+        retro::label(canvas, font, t, label_txt, x as f32, y, false);
+        let fy = (y + lh * 0.35) as i32;
+        let fh = (24.0 * s) as i32;
+        let selected = i == self.sel;
+        retro::field(canvas, x, fy, w, fh, false);
+        let shown = self.field_text(i);
+        let mut clip = String::new();
+        let mut cw = 0.0;
+        for c in shown.chars() {
+            let cw2 = cw + render::text_width(font, c.encode_utf8(&mut [0u8; 4]), scale);
+            if cw2 > w as f32 - 14.0 * s {
+                break;
+            }
+            cw = cw2;
+            clip.push(c);
+        }
+        retro::text(canvas, font, t, &clip, x as f32 + 5.0 * s, fy as f32 + (fh as f32 + lh * 0.72) / 2.0, retro::TEXT);
+        if selected {
+            retro::focus_rect(canvas, x, fy, w, fh);
+            if self.window.as_ref().is_some_and(|w| w.has_focus()) && self.frame_blink() {
+                let caret_shown = if !self.ask && i == 1 {
+                    "•".repeat(self.caret.min(8))
+                } else {
+                    self.fields[i].chars().take(self.caret).collect()
+                };
+                let cx = x as f32 + 5.0 * s
+                    + render::text_width(font, &caret_shown, scale).min(w as f32 - 10.0 * s);
+                canvas.fill(cx as i32, fy + 3, (1.5 * s).max(1.0) as i32, fh - 6, retro::DARK);
+            }
+        }
+        self.rects.push((x, fy, w, fh));
+        y + lh * 0.35 + fh as f32 + 9.0 * s
     }
 
     fn render(&mut self) {
         let Some(window) = &self.window else { return };
         let (w, h) = self.size;
         let mut canvas = render::Canvas::new(w, h);
-        canvas.clear([0xF4, 0xF4, 0xEC, 255]);
-        let sf = window.scale_factor() as f32;
-        let s = sf;
-        let scale = PxScale { x: (15.0 * s).max(11.0), y: (15.0 * s).max(11.0) };
-        let lh = render::line_height(&self.assets.font, scale);
-        let mut y = 14.0 * s + lh;
-        render::draw_line(
-            &mut canvas,
-            &self.assets.font,
-            if self.ask { "Ask Bonzi" } else { "BonziBuddy — agent settings" },
-            14.0 * s,
-            y,
-            PxScale { x: scale.x * 1.15, y: scale.y * 1.15 },
-            [0x40, 0x00, 0x80, 255],
-        );
+        let (w, h) = (w as i32, h as i32);
+        let s = window.scale_factor() as f32;
+        let t = retro::apply_retro_theme(&mut canvas, s);
+        let font = self.assets.font.clone();
+        let font = &font;
+        let scale = t.scale();
+        let lh = render::line_height(font, scale);
+        let m = (8.0 * s) as i32;
         self.rects.clear();
-        y += lh * 1.4;
-        for i in 0..if self.ask { 1 } else { 3 } {
-            let label = if self.ask { "Your question" } else { FIELDS[i] };
-            render::draw_line(&mut canvas, &self.assets.font, label, 14.0 * s, y, scale, [0x33, 0x33, 0x33, 255]);
-            y += lh * 0.95;
-            let (bx, by, bw, bh) = (
-                (14.0 * s) as i32,
-                (y - lh * 0.55) as i32,
-                (w as f32 - 28.0 * s) as i32,
-                (lh * 1.5) as i32,
-            );
-            let fill = if i == self.sel { [0xFF, 0xFF, 0xFF, 255] } else { [0xEF, 0xEF, 0xE7, 255] };
-            let border = if i == self.sel { [0x40, 0x00, 0x80, 255] } else { [0x99, 0x99, 0x99, 255] };
-            canvas.round_rect(bx, by, bw, bh, 5, fill, border);
-            let shown = self.field_text(i);
-            render::draw_line(&mut canvas, &self.assets.font, &shown, bx as f32 + 6.0 * s, y + lh * 0.35, scale, [0, 0, 0, 255]);
-            if i == self.sel && self.window.as_ref().is_some_and(|w| w.has_focus()) && self.frame_blink() {
-                let caret_shown = if i == 1 { "•".repeat(self.caret.min(8)) } else { self.fields[i].chars().take(self.caret).collect() };
-                let cx = bx as f32 + 6.0 * s
-                    + render::text_width(&self.assets.font, &caret_shown, scale);
-                canvas.round_rect(cx as i32, (y - lh * 0.35) as i32, (2.0 * s).max(1.0) as i32, (lh * 1.2) as i32, 0, [0, 0, 0, 255], [0, 0, 0, 255]);
+
+        // Bottom chrome: sunken status bar + OK/Cancel row (both modes).
+        let sb_h = (20.0 * s) as i32;
+        let sb_y = h as i32 - sb_h - m;
+        let bh = (24.0 * s) as i32;
+        let bw = (85.0 * s) as i32;
+        let by = sb_y - bh - (8.0 * s) as i32;
+        let cx = (w as i32 - (2 * bw + (10.0 * s) as i32)) / 2;
+        self.ok_rect = retro::button(&mut canvas, font, &t, cx, by, bw, bh,
+            if self.ask { "Ask" } else { "OK" }, true, false, false);
+        self.cancel_rect = retro::button(&mut canvas, font, &t,
+            cx + bw + (10.0 * s) as i32, by, bw, bh, "Cancel", false, false, false);
+
+        if self.ask {
+            // Ask mode: single group box with the question field.
+            let gy = (10.0 * s) as i32;
+            retro::group(&mut canvas, font, &t, m, gy + (t.font * 0.5) as i32,
+                w - 2 * m, by - gy - (16.0 * s) as i32, "Ask Bonzi", false);
+            let fx = m + (12.0 * s) as i32;
+            let fy = gy + (t.font * 2.4) as i32;
+            self.edit_row(&mut canvas, font, &t, "Your question", 0, fx, fy as f32, w - 2 * m - (24.0 * s) as i32);
+        } else {
+            // Property sheet: tab strip + panel + per-tab content.
+            let ty = (6.0 * s) as i32;
+            self.tab_rects = retro::tab_strip(&mut canvas, font, &t, m, ty,
+                w - 2 * m, by - (8.0 * s) as i32, &TABS, self.tab);
+            let th = (24.0 * s) as i32;
+            let px = m + (12.0 * s) as i32;
+            let pw = w - 2 * m - (24.0 * s) as i32;
+            let py = ty + th + (14.0 * s) as i32;
+            match self.tab {
+                0 => {
+                    // General: all functional settings of this fork.
+                    let gh = (3.0 * (24.0 * s + lh * 0.35 + 9.0 * s) + 26.0 * s) as i32;
+                    retro::group(&mut canvas, font, &t, m + (6.0 * s) as i32,
+                        py - (4.0 * s) as i32, w - 2 * m - (12.0 * s) as i32, gh,
+                        "BonziBuddy agent (Ask Bonzi)", false);
+                    let mut y = py as f32 + t.font * 1.2;
+                    for i in 0..3 {
+                        y = self.edit_row(&mut canvas, font, &t, FIELDS[i], i, px, y, pw);
+                    }
+                    // Original General tab had Sleep Mode (RelaxWhenIdle
+                    // registry keys, RE §2); no fork equivalent → retired.
+                    let sy = py + (t.font * 0.6) as i32 + gh + (14.0 * s) as i32;
+                    retro::group(&mut canvas, font, &t, m + (6.0 * s) as i32, sy,
+                        w - 2 * m - (12.0 * s) as i32, (52.0 * s) as i32, "Sleep Mode", true);
+                    retro::checkbox(&mut canvas, font, &t, px, sy + (20.0 * s) as i32,
+                        "Relax when idle (retired)", false, true);
+                }
+                1 => {
+                    self.retired_note(&mut canvas, font, &t, px, py,
+                        "Personality options are retired in this build.");
+                    retro::group(&mut canvas, font, &t, m + (6.0 * s) as i32,
+                        py + (26.0 * s) as i32, w - 2 * m - (12.0 * s) as i32,
+                        (150.0 * s) as i32, "About you", true);
+                    let mut y = py as f32 + 26.0 * s + t.font * 1.6;
+                    self.disabled_row(&mut canvas, font, &t, "Name:", px, &mut y, pw, "");
+                    self.disabled_row(&mut canvas, font, &t, "Age:", px, &mut y, pw, "");
+                    retro::label(&mut canvas, font, &t, "Gender:", px as f32, y, true);
+                    retro::radio(&mut canvas, font, &t, px + (60.0 * s) as i32, (y - t.font) as i32, "Male", false, true);
+                    retro::radio(&mut canvas, font, &t, px + (130.0 * s) as i32, (y - t.font) as i32, "Female", false, true);
+                    y += 26.0 * s;
+                    self.disabled_combo_row(&mut canvas, font, &t, "Country:", px, &mut y, pw, "");
+                }
+                2 => {
+                    self.retired_note(&mut canvas, font, &t, px, py,
+                        "Voice options are retired in this build.");
+                    retro::group(&mut canvas, font, &t, m + (6.0 * s) as i32,
+                        py + (26.0 * s) as i32, w - 2 * m - (12.0 * s) as i32,
+                        (150.0 * s) as i32, "Voice", true);
+                    let mut y = py as f32 + 26.0 * s + t.font * 1.6;
+                    self.disabled_combo_row(&mut canvas, font, &t, "Voice:", px, &mut y, pw, "");
+                    self.disabled_combo_row(&mut canvas, font, &t, "Speed:", px, &mut y, pw, "");
+                    retro::checkbox(&mut canvas, font, &t, px, y as i32,
+                        "Characters Listen for Input (retired)", false, true);
+                    retro::button(&mut canvas, font, &t, px, (y + 26.0 * s) as i32,
+                        (140.0 * s) as i32, (24.0 * s) as i32, "Test Voice (retired)", false, false, true);
+                }
+                3 => {
+                    // The original Privacy tab drove the phone-home opt-outs
+                    // (Browse.nbd / Search.nbd logs, daily/product fetches —
+                    // RE §3). Zero-network invariant: rendered disabled,
+                    // never functional.
+                    self.retired_note(&mut canvas, font, &t, px, py,
+                        "Privacy options are retired: this build never connects to the network.");
+                    retro::group(&mut canvas, font, &t, m + (6.0 * s) as i32,
+                        py + (26.0 * s) as i32, w - 2 * m - (12.0 * s) as i32,
+                        (110.0 * s) as i32, "Privacy", true);
+                    retro::checkbox(&mut canvas, font, &t, px, (py as f32 + 46.0 * s) as i32,
+                        "Collect browsing history (retired)", false, true);
+                    retro::checkbox(&mut canvas, font, &t, px, (py as f32 + 74.0 * s) as i32,
+                        "Send anonymous usage information (retired)", false, true);
+                }
+                4 => {
+                    self.retired_note(&mut canvas, font, &t, px, py,
+                        "Registration is retired: there is nothing to register with.");
+                    retro::group(&mut canvas, font, &t, m + (6.0 * s) as i32,
+                        py + (26.0 * s) as i32, w - 2 * m - (12.0 * s) as i32,
+                        (120.0 * s) as i32, "Registration", true);
+                    let mut y = py as f32 + 26.0 * s + t.font * 1.6;
+                    self.disabled_row(&mut canvas, font, &t, "Registration number:", px, &mut y, pw, "");
+                    retro::button(&mut canvas, font, &t, px, y as i32,
+                        (160.0 * s) as i32, (24.0 * s) as i32, "Register Now... (retired)", false, false, true);
+                }
+                _ => {
+                    self.retired_note(&mut canvas, font, &t, px, py,
+                        "E-Mail is retired: this build never connects to the network.");
+                    retro::group(&mut canvas, font, &t, m + (6.0 * s) as i32,
+                        py + (26.0 * s) as i32, w - 2 * m - (12.0 * s) as i32,
+                        (150.0 * s) as i32, "Mail account", true);
+                    let mut y = py as f32 + 26.0 * s + t.font * 1.6;
+                    self.disabled_row(&mut canvas, font, &t, "Mail Server:", px, &mut y, pw, "");
+                    self.disabled_row(&mut canvas, font, &t, "User Name:", px, &mut y, pw, "");
+                    self.disabled_row(&mut canvas, font, &t, "Password:", px, &mut y, pw, "");
+                }
             }
-            self.rects.push((bx, by, bw, bh));
-            y += lh * 1.35;
         }
-        // Save button.
-        let (bx, by, bw, bh) = ((14.0 * s) as i32, y as i32, (110.0 * s) as i32, (lh * 1.7) as i32);
-        canvas.round_rect(bx, by, bw, bh, 6, [0xE8, 0xE0, 0xF8, 255], [0x40, 0x00, 0x80, 255]);
-        render::draw_line(&mut canvas, &self.assets.font, if self.ask { "Ask" } else { "Save" }, bx as f32 + bw as f32 / 2.0 - 16.0 * s, by as f32 + bh as f32 * 0.68, scale, [0x40, 0x00, 0x80, 255]);
-        self.save_rect = (bx, by, bw, bh);
-        render::draw_line(
-            &mut canvas,
-            &self.assets.font,
-            &self.status,
-            (bx + bw + 14) as f32,
-            by as f32 + bh as f32 * 0.68,
-            scale,
-            [0x20, 0x60, 0x20, 255],
-        );
-        render::draw_line(
-            &mut canvas,
-            &self.assets.font,
-            if self.ask { "Enter asks. Esc closes." } else { "Click a field to edit. Enter saves. Esc closes." },
-            14.0 * s,
-            (by + bh) as f32 + lh * 1.3,
-            scale,
-            [0x60, 0x60, 0x60, 255],
-        );
-        let _ = h;
+        retro::statusbar(&mut canvas, font, &t, m, sb_y, w - 2 * m, sb_h, &self.status);
+        let _ = (scale, lh);
 
         let Some(px) = &mut self.pixels else { return };
         let frame = px.frame_mut();
@@ -204,6 +366,32 @@ impl Ui {
             dst[3] = a as u8;
         }
         let _ = px.render();
+    }
+
+    fn retired_note(&self, canvas: &mut Canvas, font: &FontArc, t: &retro::Theme, x: i32, y: i32, txt: &str) {
+        retro::text(canvas, font, t, txt, x as f32, y as f32 + t.font, retro::TITLE_A);
+    }
+
+    /// Disabled label + sunken gray field row (retired-tab filler).
+    fn disabled_row(&self, canvas: &mut Canvas, font: &FontArc, t: &retro::Theme,
+        label_txt: &str, x: i32, y: &mut f32, w: i32, val: &str) {
+        retro::label(canvas, font, t, label_txt, x as f32, *y, true);
+        let fy = (*y + t.font * 0.5) as i32;
+        let fh = (24.0 * t.s) as i32;
+        retro::field(canvas, x, fy, w, fh, true);
+        if !val.is_empty() {
+            retro::label(canvas, font, t, val, x as f32 + 5.0 * t.s, fy as f32 + fh as f32 * 0.7, true);
+        }
+        *y = fy as f32 + fh as f32 + 9.0 * t.s;
+    }
+
+    fn disabled_combo_row(&self, canvas: &mut Canvas, font: &FontArc, t: &retro::Theme,
+        label_txt: &str, x: i32, y: &mut f32, w: i32, _val: &str) {
+        retro::label(canvas, font, t, label_txt, x as f32, *y, true);
+        let fy = (*y + t.font * 0.5) as i32;
+        let fh = (24.0 * t.s) as i32;
+        retro::combo(canvas, t, x, fy, w, fh, true);
+        *y = fy as f32 + fh as f32 + 9.0 * t.s;
     }
 
     fn frame_blink(&self) -> bool {
@@ -231,9 +419,13 @@ pub fn run(ask: bool) -> Result<(), Box<dyn std::error::Error>> {
         caret: 0,
         window: None,
         pixels: None,
-        size: (W, if ask { 170 } else { H }),
+        size: (W, if ask { ASK_H } else { H }),
         rects: Vec::new(),
-        save_rect: (0, 0, 0, 0),
+        tab_rects: Vec::new(),
+        ok_rect: (0, 0, 0, 0),
+        cancel_rect: (0, 0, 0, 0),
+        tab: 0,
+        quit: false,
         status: String::new(),
         mouse_pos: (0.0, 0.0),
         ask,
@@ -249,7 +441,7 @@ pub fn run(ask: bool) -> Result<(), Box<dyn std::error::Error>> {
             let Ok(window) = el.create_window(
                 WindowAttributes::default()
                     .with_title(if ui.ask { "Ask Bonzi" } else { "BonziBuddy settings" })
-                    .with_inner_size(LogicalSize::new(W, if ui.ask { 170 } else { H }))
+                    .with_inner_size(LogicalSize::new(W, if ui.ask { ASK_H } else { H }))
                     .with_resizable(false),
             ) else {
                 el.exit();
@@ -305,7 +497,11 @@ pub fn run(ask: bool) -> Result<(), Box<dyn std::error::Error>> {
             WindowEvent::MouseInput { state: ElementState::Pressed, button: MouseButton::Left, .. } => {
                 let (x, y) = ui.mouse_pos;
                 ui.click(x, y);
-                ui.window.as_ref().map(|w| w.request_redraw());
+                if ui.quit {
+                    el.exit();
+                } else {
+                    ui.window.as_ref().map(|w| w.request_redraw());
+                }
             }
             WindowEvent::KeyboardInput { event: KeyEvent { state: ElementState::Pressed, logical_key, text, .. }, .. } => {
                 match &logical_key {
@@ -314,7 +510,7 @@ pub fn run(ask: bool) -> Result<(), Box<dyn std::error::Error>> {
                         ui.save();
                         el.exit();
                     }
-                    Key::Named(NamedKey::Tab) => {
+                    Key::Named(NamedKey::Tab) if ui.ask || ui.tab == 0 => {
                         ui.sel = (ui.sel + 1) % if ui.ask { 1 } else { 3 };
                         ui.caret = ui.fields[ui.sel].chars().count();
                     }
@@ -345,7 +541,7 @@ pub fn run(ask: bool) -> Result<(), Box<dyn std::error::Error>> {
             }
             WindowEvent::CloseRequested => el.exit(),
             _ => {}
-        },
+        }
         Event::AboutToWait => {
             el.set_control_flow(ControlFlow::Wait);
         }
