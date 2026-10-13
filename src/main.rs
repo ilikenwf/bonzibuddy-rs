@@ -148,7 +148,8 @@ fn make_tray(assets: &assets::Assets) -> Option<tray_icon::TrayIcon> {
     #[cfg(target_os = "linux")]
     {
         // muda/tray-icon use GTK on Linux and never initialize it themselves.
-        if gtk::init().is_err() {
+        if let Err(e) = gtk::init() {
+            eprintln!("tray: gtk init failed: {e}");
             return None;
         }
     }
@@ -167,7 +168,7 @@ fn make_tray(assets: &assets::Assets) -> Option<tray_icon::TrayIcon> {
         .with_tooltip("BonziBuddy")
         .with_icon(icon)
         .build()
-        .ok()
+        .map_err(|e| eprintln!("tray: build failed: {e} (Plasma: check tray Settings > Entries - new items can be hidden by default)")).ok()
 }
 
 fn toggle_visibility(app: &mut App) {

@@ -156,3 +156,67 @@ pub fn draw_line(canvas: &mut Canvas, font: &FontArc, text: &str, x: f32, y: f32
         x += adv;
     }
 }
+
+#[cfg(test)]
+mod blit_tests {
+    use super::*;
+    use crate::assets::Frame;
+
+    fn frame(w: u32, h: u32, rgba: Vec<u8>) -> Frame {
+        Frame { w, h, rgba }
+    }
+
+    #[test]
+    fn upscale_smooths_alpha_edge() {
+        // Opaque left half, transparent right half; at 2x the destination
+        // column straddling the source boundary must get partial alpha
+        // (bilinear), where nearest-neighbor would give a hard cliff.
+        let mut rgba = vec![0u8; 4 * 1 * 4];
+        for px in 0..2 {
+            rgba[px * 4..px * 4 + 4].copy_from_slice(&[255, 255, 255, 255]);
+        }
+        let img = frame(4, 1, rgba);
+        let mut canvas = Canvas::new(8, 1);
+        canvas.blit(&img, 0, 0, 2.0);
+        let alphas: Vec<u8> = (0..8).map(|px| canvas.px[px * 4 + 3]).collect();
+        // dest col 3 straddles src px1/px2 (w .75/.25) -> alpha 191;
+        // col 4 straddles with .25/.75 -> 64; nearest-neighbor would be
+        // [255,255,255,255,0,0,0,0] instead.
+        assert_eq!(alphas[2], 255, "interior stays fully opaque: {alphas:?}");
+        assert!(alphas[3] > 0 && alphas[3] < 255, "expected soft edge: {alphas:?}");
+        assert!(alphas[4] > 0 && alphas[4] < 255, "expected soft edge: {alphas:?}");
+        assert_eq!(alphas[5], 0, "outside the fade untouched: {alphas:?}");
+    }
+
+    #[test]
+    fn scale_one_is_pixel_exact() {
+        let rgba = vec![
+            10, 20, 30, 255, //
+            10, 20, 30, 255, //
+        ];
+        let img = frame(2, 1, rgba);
+        let mut canvas = Canvas::new(4, 1);
+        canvas.blit(&img, 0, 0, 1.0);
+        assert_eq!(&canvas.px[0..4], &[10, 20, 30, 255]);
+        assert_eq!(&canvas.px[4..8], &[10, 20, 30, 255]);
+        assert_eq!(&canvas.px[8..12], &[0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn transparent_pixels_do_not_bleed_color() {
+        // Opaque red next to black-transparent: the straddling destination
+        // pixel must be red (premultiplied interp), not a darkened red.
+        let rgba = vec![
+            200, 0, 0, 255, //
+            0, 0, 0, 0, //
+        ];
+        let img = frame(2, 1, rgba);
+        let mut canvas = Canvas::new(4, 1);
+        canvas.blit(&img, 0, 0, 2.0);
+        // dx=1 straddles: taps are red (w .75) and transparent (w .25) ->
+        // a=191, premultiplied red stored as 200*191/255 = 149. Naive
+        // non-premultiplied interp would store 150*191/255 = 112 (bleed).
+        let o = 1 * 4;
+        assert!(canvas.px[o] >= 140, "red must not darken by bleed: {:?}", &canvas.px[o..o + 4]);
+    }
+}
