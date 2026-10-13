@@ -153,10 +153,22 @@ fn make_tray(assets: &assets::Assets) -> Option<tray_icon::TrayIcon> {
             return None;
         }
     }
-    let img = image::open(assets.root().join("favicon.ico")).ok()?.to_rgba8();
+    let img = match image::open(assets.root().join("favicon.ico")) {
+        Ok(i) => i.to_rgba8(),
+        Err(e) => {
+            eprintln!("tray: favicon.ico open failed at {}: {e}", assets.root().display());
+            return None;
+        }
+    };
     let img = image::imageops::resize(&img, 32, 32, image::imageops::FilterType::Lanczos3);
     let (tw, th) = (img.width(), img.height());
-    let icon = tray_icon::Icon::from_rgba(img.into_raw(), tw, th).ok()?;
+    let icon = match tray_icon::Icon::from_rgba(img.into_raw(), tw, th) {
+        Ok(i) => i,
+        Err(e) => {
+            eprintln!("tray: icon from_rgba failed: {e}");
+            return None;
+        }
+    };
     let menu = Menu::new();
     let toggle = MenuItem::with_id("toggle", "Show / Hide", true, None);
     let reset = MenuItem::with_id("reset-zoom", "Reset Zoom", true, None);
