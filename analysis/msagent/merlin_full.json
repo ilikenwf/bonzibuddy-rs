@@ -1,0 +1,1832 @@
+{
+ "file": "Merlin.acs",
+ "size": 2180663,
+ "sha256": "a88151f313bea60002c5e5cb8b4d7dc5e2d919ba8fe78db1a4d05279a9ad58d7",
+ "character": {
+  "minor": 1,
+  "major": 2,
+  "guid": "4E574F44-B521-11D0-9E9A-00C04FD7081F",
+  "width": 128,
+  "height": 128,
+  "transparent_idx": 10,
+  "flags": 1114656,
+  "animset_major": 2,
+  "animset_minor": 0,
+  "voice_enabled": true,
+  "balloon_enabled": true,
+  "balloon_style": 1,
+  "std_anim_set": true,
+  "voice": {
+   "tts_engine": "CA141FD0-AC7F-11D1-97A3-0060082730FF",
+   "tts_mode": "CA141FD0-AC7F-11D1-97A3-006008273002",
+   "speed": 156,
+   "pitch": 50,
+   "extra_present": 1,
+   "langid": 1033,
+   "dialect": "",
+   "gender": 2,
+   "age": 30,
+   "style": "Business"
+  },
+  "balloon": {
+   "lines": 2,
+   "chars_per_line": 32,
+   "fg": "#000000",
+   "bg": "#FFFFE1",
+   "border": "#000000",
+   "font": "MS Sans Serif",
+   "font_height": -13,
+   "font_weight": 400,
+   "italic": 0,
+   "unknown": 0
+  },
+  "palette_colors": 256,
+  "tray_icon": 1,
+  "tray_icon_sizes": [
+   112,
+   232
+  ],
+  "states": [
+   {
+    "state": "SHOWING",
+    "anims": [
+     "SHOW"
+    ]
+   },
+   {
+    "state": "HIDING",
+    "anims": [
+     "HIDE"
+    ]
+   },
+   {
+    "state": "GESTURINGLEFT",
+    "anims": [
+     "GESTURELEFT"
+    ]
+   },
+   {
+    "state": "GESTURINGRIGHT",
+    "anims": [
+     "GESTURERIGHT"
+    ]
+   },
+   {
+    "state": "GESTURINGUP",
+    "anims": [
+     "GESTUREUP"
+    ]
+   },
+   {
+    "state": "GESTURINGDOWN",
+    "anims": [
+     "GESTUREDOWN"
+    ]
+   },
+   {
+    "state": "LISTENING",
+    "anims": [
+     "ALERT"
+    ]
+   },
+   {
+    "state": "HEARING",
+    "anims": [
+     "HEARING_1",
+     "HEARING_2",
+     "HEARING_3",
+     "HEARING_4"
+    ]
+   },
+   {
+    "state": "IDLINGLEVEL1",
+    "anims": [
+     "BLINK",
+     "IDLE1_1",
+     "IDLE1_2",
+     "IDLE1_3",
+     "IDLE1_4"
+    ]
+   },
+   {
+    "state": "IDLINGLEVEL2",
+    "anims": [
+     "IDLE2_2",
+     "IDLE1_1",
+     "IDLE1_2",
+     "IDLE1_3",
+     "IDLE1_4",
+     "BLINK",
+     "IDLE2_1"
+    ]
+   },
+   {
+    "state": "IDLINGLEVEL3",
+    "anims": [
+     "BLINK",
+     "IDLE3_1",
+     "IDLE3_2"
+    ]
+   },
+   {
+    "state": "MOVINGLEFT",
+    "anims": [
+     "MOVELEFT"
+    ]
+   },
+   {
+    "state": "MOVINGRIGHT",
+    "anims": [
+     "MOVERIGHT"
+    ]
+   },
+   {
+    "state": "MOVINGUP",
+    "anims": [
+     "MOVEUP"
+    ]
+   },
+   {
+    "state": "MOVINGDOWN",
+    "anims": [
+     "MOVEDOWN"
+    ]
+   },
+   {
+    "state": "SPEAKING",
+    "anims": [
+     "RESTPOSE"
+    ]
+   }
+  ],
+  "localized": [
+   {
+    "langid": 9,
+    "name": "Merlin",
+    "desc": "I am your wise and magical companion. When you need assistance, summon me for a demonstration of my awesome, cyber-magical powers.",
+    "extra": "While a little old-fashioned, a little digital magic is always helpful.^^Here's an important reminder."
+   },
+   {
+    "langid": 1025,
+    "name": "\u0645\u0631\u0644\u064a\u0646",
+    "desc": "\u0623\u0646\u0627 \u0631\u0641\u064a\u0642\u0643 \u0627\u0644\u062d\u0643\u064a\u0645 \u0648\u0627\u0644\u0639\u062c\u064a\u0628. \u0639\u0646\u062f\u0645\u0627 \u062a\u062d\u062a\u0627\u062c \u0644\u0645\u0633\u0627\u0639\u062f\u0629\u060c \u0627\u0633\u062a\u062f\u0639\u0646\u064a \u0643\u064a \u0623\u0639\u0631\u0636 \u0644\u0643 \u0642\u0648\u0627\u064a \u0627\u0644\u0645\u062f\u0647\u0634\u0629 \u0627\u0644\u062a\u064a \u062a\u0641\u0648\u0642 \u0627\u0644\u062a\u0635\u0648\u0631.",
+    "extra": "\u0628\u0631\u063a\u0645 \u0643\u0648\u0646\u0647 \u0645\u0646 \u0627\u0644\u0646\u0645\u0637 \u0627\u0644\u0642\u062f\u064a\u0645\u060c \u0625\u0644\u0627 \u0623\u0646 \u0642\u0644\u064a\u0644\u0627\u064b \u0645\u0646 \u0627\u0644\u0633\u062d\u0631 \u0627\u0644\u0631\u0642\u0645\u064a \u0633\u064a\u0641\u064a\u062f\u0643.^^\u0647\u0630\u0627 \u062a\u0630\u0643\u064a\u0631 \u0645\u0647\u0645."
+   },
+   {
+    "langid": 1028,
+    "name": "\u6885\u6797",
+    "desc": "\u6211\u662f\u60a8\u90a3\u5177\u6709\u667a\u6167\u53c8\u6709\u9b54\u529b\u7684\u4f19\u4f34\u3002\u7576\u60a8\u9700\u8981\u5e6b\u5fd9\u6642\uff0c\u5c31\u53eb\u6211\u51fa\u4f86\u5c55\u73fe\u4e00\u4e0b\u6211\u90a3\u795e\u5947\u7684\u529b\u91cf\u5427\uff01",
+    "extra": "\u96d6\u7136\u6709\u9ede\u8001\u5957\uff0c\u4f46\u6709\u9ede\u6578\u4f4d\u9b54\u529b\u7e3d\u662f\u6703\u6709\u5e6b\u52a9\u7684\u5594\u3002^^\u9019\u5152\u6709\u500b\u91cd\u8981\u7684\u63d0\u793a\u5594\uff01"
+   },
+   {
+    "langid": 1031,
+    "name": "Merlin",
+    "desc": "Ich bin Euer weiser und magischer Begleiter. Wenn Ihr Hilfe ben\u00f6tigt, ruft mich, um eine Demonstration meiner au\u00dfergew\u00f6hnlichen cybermagischen Kr\u00e4fte zu sehen.",
+    "extra": "Wenn auch Magie etwas altmodisch sein mag, so ist sie dennoch auch im digitalen Zeitalter hilfreich. ^^Hier ist eine wichtige Erinnerung."
+   },
+   {
+    "langid": 1037,
+    "name": "\u05de\u05e8\u05dc\u05d9\u05df",
+    "desc": "\u05d0\u05e0\u05d9 \u05d4\u05d7\u05d1\u05e8 \u05d4\u05d7\u05db\u05dd \u05d5\u05d4\u05e7\u05d5\u05e1\u05de\u05d9 \u05e9\u05dc\u05da. \u05db\u05e9\u05d0\u05ea\u05d4 \u05d6\u05e7\u05d5\u05e7 \u05dc\u05e2\u05d6\u05e8\u05d4, \u05e7\u05e8\u05d0 \u05dc\u05d9 \u05dc\u05d4\u05d3\u05d2\u05de\u05d4 \u05e9\u05dc \u05e2\u05d5\u05e6\u05de\u05ea \u05db\u05d5\u05d7\u05d5\u05ea\u05d9 \u05d4\u05e7\u05e1\u05d5\u05de\u05d9\u05dd.",
+    "extra": "\u05dc\u05de\u05e8\u05d5\u05ea  \u05e9\u05e7\u05e1\u05dd \u05d4\u05d5\u05d0 \u05e8\u05e2\u05d9\u05d5\u05df \u05de\u05d9\u05d5\u05e9\u05df, \u05e7\u05e1\u05dd \u05d3\u05d9\u05d2\u05d9\u05d8\u05dc\u05d9 \u05ea\u05de\u05d9\u05d3 \u05de\u05d5\u05e2\u05d9\u05dc.^^\u05d4\u05e0\u05d4 \u05ea\u05d6\u05db\u05d5\u05e8\u05ea \u05d7\u05e9\u05d5\u05d1\u05d4."
+   },
+   {
+    "langid": 1041,
+    "name": "\u30de\u30fc\u30ea\u30f3",
+    "desc": "\u79c1\u306f\u8ce2\u3044\u9b54\u6cd5\u4f7f\u3044\u3067\u3042\u308b\u3088\u3002\u52a9\u3051\u304c\u5fc5\u8981\u306a\u3089\u3001\u79c1\u3092\u547c\u3073\u306a\u3055\u3044\u3002\u79c1\u306e\u9b54\u6cd5\u3067\u7b54\u3048\u3092\u62ab\u9732\u3059\u308b\u3042\u308b\u3088\u3002",
+    "extra": "\u79c1\u306e\u30c7\u30b8\u30bf\u30eb \u30de\u30b8\u30c3\u30af\u306f\u3044\u3064\u3067\u3082\u30d1\u30ef\u30d5\u30eb\u3067\u3042\u308b\u3088\u3002^^\u5fd8\u308c\u306a\u3044\u3067\u306d\u3002"
+   },
+   {
+    "langid": 1042,
+    "name": "\uc0ac\uc774\ubc84 \ub9c8\ubc95\uc0ac",
+    "desc": "\ub2f9\uc2e0\uc758 \ud604\uba85\ud55c \ub9c8\ubc95\uc0ac \uce5c\uad6c\uc5d0\uc694. \ub3c4\uc6c0\uc774 \ud544\uc694\ud560 \ub54c \ubd88\ub7ec\uc8fc\uc2dc\uba74 \uba4b\uc9c4 \uc0ac\uc774\ubc84 \ub9c8\ubc95\uc758 \ud798\uc744 \ubcf4\uc5ec\ub4dc\ub9b4\uac8c\uc694.",
+    "extra": "\ub2e4\uc18c \uad6c\uc2dd\uc774\uc9c0\ub9cc \uc57d\uac04\uc758 \ub514\uc9c0\ud138 \ub9c8\ubc95\uc774\ub77c\ub3c4 \uc5b8\uc81c\ub098 \ub3c4\uc6c0\uc774 \ub418\uc9c0\uc694. \uaf2d \uae30\uc5b5\ud558\uc138\uc694."
+   },
+   {
+    "langid": 2052,
+    "name": "\u9ed8\u6797",
+    "desc": "\u6211\u662f\u667a\u6167\u548c\u9b54\u6cd5\u7684\u5316\u8eab\u3002\u5982\u679c\u60a8\u9700\u8981\u5e2e\u52a9\uff0c\u53ea\u9700\u5c06\u6211\u5524\u6765\uff0c\u4fbf\u4f1a\u770b\u5230\u6211\u90a3\u51fa\u795e\u5165\u5316\u7684\u6f14\u793a\u3002",
+    "extra": "\u5176\u5b9e\u6211\u4e5f\u4e0d\u592a\u60f3\u8d76\u65f6\u9ae6\uff0c\u4f46\u5e26\u4e0a\u70b9\u6570\u7801\u9b54\u6cd5\u603b\u8fd8\u662f\u4f1a\u6709\u7528\u7684\u5427\u3002^^\u6709\u4ef6\u91cd\u8981\u7684\u4e8b\u8981\u63d0\u9192\u60a8\u3002"
+   },
+   {
+    "langid": 1054,
+    "name": "\u0e1e\u0e48\u0e2d\u0e21\u0e14\u0e40\u0e21\u0e2d\u0e23\u0e4c\u0e25\u0e34\u0e19",
+    "desc": "\u0e09\u0e31\u0e19\u0e04\u0e37\u0e2d\u0e40\u0e1e\u0e37\u0e48\u0e2d\u0e19\u0e1c\u0e39\u0e49\u0e09\u0e25\u0e32\u0e14\u0e41\u0e25\u0e30\u0e21\u0e35\u0e2d\u0e32\u0e04\u0e21 \u0e40\u0e21\u0e37\u0e48\u0e2d\u0e43\u0e14\u0e01\u0e47\u0e15\u0e32\u0e21\u0e17\u0e35\u0e48\u0e04\u0e38\u0e13\u0e15\u0e49\u0e2d\u0e07\u0e01\u0e32\u0e23\u0e04\u0e27\u0e32\u0e21\u0e0a\u0e48\u0e27\u0e22\u0e40\u0e2b\u0e25\u0e37\u0e2d \u0e41\u0e04\u0e48\u0e40\u0e23\u0e35\u0e22\u0e01\u0e43\u0e0a\u0e49\u0e09\u0e31\u0e19\u0e40\u0e1e\u0e37\u0e48\u0e2d\u0e1e\u0e25\u0e31\u0e07\u0e27\u0e34\u0e40\u0e28\u0e29\u0e17\u0e32\u0e07\u0e04\u0e2d\u0e21\u0e1e\u0e34\u0e27\u0e40\u0e15\u0e2d\u0e23\u0e4c\u0e17\u0e35\u0e48\u0e40\u0e2b\u0e25\u0e37\u0e2d\u0e40\u0e0a\u0e37\u0e48\u0e2d\u0e41\u0e25\u0e30\u0e19\u0e48\u0e32\u0e22\u0e33\u0e40\u0e01\u0e23\u0e07",
+    "extra": "\u0e16\u0e36\u0e07\u0e41\u0e21\u0e49\u0e27\u0e48\u0e32\u0e08\u0e30\u0e25\u0e49\u0e32\u0e2a\u0e21\u0e31\u0e22\u0e44\u0e1b\u0e2a\u0e31\u0e01\u0e19\u0e34\u0e14 \u0e04\u0e32\u0e16\u0e32\u0e2d\u0e32\u0e04\u0e21\u0e14\u0e34\u0e08\u0e34\u0e17\u0e31\u0e25\u0e01\u0e47\u0e40\u0e1b\u0e47\u0e19\u0e1b\u0e23\u0e30\u0e42\u0e22\u0e0a\u0e19\u0e4c\u0e40\u0e2a\u0e21\u0e2d^^\u0e19\u0e35\u0e48\u0e04\u0e37\u0e2d\u0e15\u0e31\u0e27\u0e40\u0e15\u0e37\u0e2d\u0e19\u0e17\u0e35\u0e48\u0e2a\u0e33\u0e04\u0e31\u0e0d\u0e02\u0e2d\u0e07\u0e04\u0e38\u0e13"
+   },
+   {
+    "langid": 1069,
+    "name": "Merlin",
+    "desc": "Zure lagun jakintsu eta magikoa naiz. Laguntza behar duzunean, dei egidazu eta nire ahalmen zibermagiko handien erakustaldia egingo dizut.",
+    "extra": "Itxura ez du oso modakoa, baina magia digital pixka bat beti da lagungarri.^^Gogorarazle trebea duzu."
+   },
+   {
+    "langid": 1046,
+    "name": "Merlin",
+    "desc": "Sou seu companheiro s\u00e1bio e m\u00e1gico. Quando precisar de ajuda, evoque-me para que eu fa\u00e7a uma demonstra\u00e7\u00e3o dos meus extraordin\u00e1rios poderes de magia cibern\u00e9tica.",
+    "extra": "Mesmo que esteja um pouco fora de moda, uma magicazinha digital \u00e9 sempre \u00fatil.^^Eis um importante lembrete."
+   },
+   {
+    "langid": 1050,
+    "name": "Merlin",
+    "desc": "Ja sam va\u0161 mudri i \u010darobni suradnik. Zatrebate li pomo\u0107, pozovite me zbog mojih magi\u010dnih kibernetskih mo\u0107i.",
+    "extra": "Iako malo staromodna, mala digitalna \u010darolija uvijek \u0107e dobro do\u0107i.^^Nemojte to zaboraviti."
+   },
+   {
+    "langid": 1029,
+    "name": "Merlin",
+    "desc": "Jsem v\u00e1\u0161 moudr\u00fd r\u00e1dce vl\u00e1dnouc\u00ed \u010darovn\u00fdmi silami. Pokud pot\u0159ebujete moji pomoc, p\u0159ivolejte m\u011b a j\u00e1 v\u00e1m uk\u00e1\u017ei svou d\u011bsivou kybernetickomagickou moc.",
+    "extra": "Podle m\u00e9ho trochu starom\u00f3dn\u00edho n\u00e1zoru by ne\u0161kodilo mal\u00e9 digit\u00e1ln\u00ed kouzlo.^^\u010c\u00e1ry m\u00e1ry - d\u016fle\u017eit\u00e1 p\u0159ipom\u00ednka."
+   },
+   {
+    "langid": 1030,
+    "name": "Merlin",
+    "desc": "Jeg er din vise og magiske ven. Tilkald mig, hvis du f\u00e5r brug for assistance, s\u00e5 skal jeg give dig en demonstration af mine utrolige cybermagiske kr\u00e6fter.",
+    "extra": "Sk\u00f8nt gammeldags er en smule digital magi altid ganske nyttig.^^Her er en vigtig p\u00e5mindelse."
+   },
+   {
+    "langid": 1043,
+    "name": "Merlijn",
+    "desc": "Ik ben uw wijze en magische metgezel. Wanneer u hulp nodig hebt, kunt u mij oproepen om u mijn wonderbaarlijke, cyber-magische krachten te tonen.",
+    "extra": "Hoewel ik een beetje ouderwets ben, is een beetje digitale magie altijd handig.^^Hier is een belangrijke herinnering."
+   },
+   {
+    "langid": 1035,
+    "name": "Merlin",
+    "desc": "Olen viisas, maaginen avustajasi. Kun tarvitset apua, pyyd\u00e4 minua esittelem\u00e4\u00e4n huikeita taikavoimiani.",
+    "extra": "Ripaus digitaalista taikuutta auttaa aina.^^T\u00e4ss\u00e4 t\u00e4rke\u00e4 muistutus."
+   },
+   {
+    "langid": 1036,
+    "name": "Merlin",
+    "desc": "Je suis votre compagnon serein et enchanteur. Si vous avez besoin d'aide, invoquez-moi pour une d\u00e9monstration de mes immenses pouvoirs cyber-magiques.",
+    "extra": "Plut\u00f4t qu'une magie un peu vieux-jeu, une magie num\u00e9rique est toujours plus serviable.^^Voici un rappel important."
+   },
+   {
+    "langid": 1032,
+    "name": "\u039f \u039c\u03ac\u03b3\u03bf\u03c2",
+    "desc": "\u0395\u03af\u03bc\u03b1\u03b9 \u03bf \u03c3\u03bf\u03c6\u03cc\u03c2 \u03ba\u03b1\u03b9 \u03bc\u03b1\u03b3\u03b9\u03ba\u03cc\u03c2 \u03c3\u03b1\u03c2 \u03c3\u03cd\u03bd\u03c4\u03c1\u03bf\u03c6\u03bf\u03c2. \u038c\u03c4\u03b1\u03bd \u03c7\u03c1\u03b5\u03b9\u03b1\u03c3\u03c4\u03b5\u03af\u03c4\u03b5 \u03b2\u03bf\u03ae\u03b8\u03b5\u03b9\u03b1, \u03ba\u03b1\u03bb\u03ad\u03c3\u03c4\u03b5 \u03bc\u03b5 \u03b3\u03b9\u03b1 \u03bc\u03b9\u03b1 \u03b5\u03c0\u03af\u03b4\u03b5\u03b9\u03be\u03b7 \u03c4\u03c9\u03bd \u03b5\u03ba\u03c0\u03bb\u03b7\u03ba\u03c4\u03b9\u03ba\u03ce\u03bd, \u03bc\u03b1\u03b3\u03b9\u03ba\u03ce\u03bd \u03bc\u03bf\u03c5 \u03b4\u03c5\u03bd\u03ac\u03bc\u03b5\u03c9\u03bd.",
+    "extra": "\u03a0\u03b1\u03c1\u03cc\u03bb\u03bf \u03c0\u03bf\u03c5 \u03b5\u03af\u03bd\u03b1\u03b9 \u03c0\u03b1\u03bb\u03b1\u03b9\u03bf\u03bc\u03bf\u03b4\u03af\u03c4\u03b9\u03ba\u03b7, \u03bb\u03af\u03b3\u03b7 \u03c8\u03b7\u03c6\u03b9\u03b1\u03ba\u03ae \u03bc\u03b1\u03b3\u03b5\u03af\u03b1 \u03b2\u03bf\u03b7\u03b8\u03ac\u03b5\u03b9 \u03c0\u03ac\u03bd\u03c4\u03b1.^^\u0391\u03c5\u03c4\u03ae \u03b5\u03af\u03bd\u03b1\u03b9 \u03bc\u03b9\u03b1 \u03c3\u03b7\u03bc\u03b1\u03bd\u03c4\u03b9\u03ba\u03ae \u03c5\u03c0\u03b5\u03bd\u03b8\u03cd\u03bc\u03b9\u03c3\u03b7."
+   },
+   {
+    "langid": 1038,
+    "name": "Merlin",
+    "desc": "B\u00f6lcs m\u00e1gusod vagyok. Ha seg\u00edts\u00e9g kell, h\u00edvj \u00e9s l\u00e1sd kibernetikus var\u00e1zser\u0151m hatalm\u00e1t.",
+    "extra": "Noha kiss\u00e9 \u00f3divat\u00fa, az\u00e9rt n\u00e9mi digit\u00e1lis m\u00e1gia mindig j\u00f3l j\u00f6n.^^\u00cdme egy fontos eml\u00e9keztet\u0151."
+   },
+   {
+    "langid": 2070,
+    "name": "Merlim",
+    "desc": "Sou o seu companheiro s\u00e1bio e m\u00e1gico. Quando precisar de ajuda, invoque-me para uma demonstra\u00e7\u00e3o dos meus extraordin\u00e1rios poderes de magia cibern\u00e9tica.",
+    "extra": "Embora esteja um pouco fora de moda, um pouco de magia digital \u00e9 sempre \u00fatil.^^Eis um lembrete importante."
+   },
+   {
+    "langid": 1040,
+    "name": "Merlino",
+    "desc": "La saggezza sia con voi! Io sono il vostro consigliere cibermagico. Evocatemi tutte le volte che avete bisogno di un saggio consiglio... o di un aiuto.",
+    "extra": "Anche se pu\u00f2 sembrare fuori moda, un pizzico di magia digitale pu\u00f2 sempre servire.^^Ecco un importantissimo promemoria."
+   },
+   {
+    "langid": 1044,
+    "name": "Merlin",
+    "desc": "Jeg er din kloke og magiske f\u00f8lgesvenn. Tilkall meg n\u00e5r du trenger hjelp, og du vil f\u00e5 demonstrert mine fantastiske, data-magiske krefter.",
+    "extra": "Selv om det er en smule gammeldags, s\u00e5 er litt digital magi alltid nyttig.^^Her er en viktig p\u00e5minnelse."
+   },
+   {
+    "langid": 1045,
+    "name": "Czarodziej",
+    "desc": "Jestem Twoim m\u0105drym magiem. Gdy b\u0119dziesz potrzebowa\u0107 pomocy, zademonstruj\u0119 Ci swoj\u0105 wiedz\u0119 i magiczn\u0105 moc.",
+    "extra": "Chocia\u017c jestem nieco staro\u015bwiecki, znam cyfrow\u0105 magi\u0119, kt\u00f3ra mo\u017ce okaza\u0107 si\u0119 przydatna.^^Oto wa\u017cne przypomnienie."
+   },
+   {
+    "langid": 1048,
+    "name": "Merlin",
+    "desc": "Sunt tovar\u0103\u015ful  dvs. \u00een\u0163elept \u015fi cu puteri magice. C\u00e2nd ave\u0163i nevoie de ajutor, chema\u0163i-m\u0103 pentru a v\u0103 face o demonstra\u0163ie a uluitoarelor mele puteri cibermagice.",
+    "extra": "De\u015fi pu\u0163in demodat\u0103, pu\u0163in\u0103 magie digital\u0103 este \u00eentotdeauna folositoare. Iat\u0103 un memento important."
+   },
+   {
+    "langid": 1049,
+    "name": "\u041c\u0430\u0433",
+    "desc": "\u042f \u0432\u0430\u0448 \u043c\u0443\u0434\u0440\u044b\u0439 \u0438 \u0432\u043e\u043b\u0448\u0435\u0431\u043d\u044b\u0439 \u043f\u043e\u043c\u043e\u0449\u043d\u0438\u043a. \u041f\u0440\u0438\u0437\u043e\u0432\u0438\u0442\u0435 \u043c\u0435\u043d\u044f, \u0438 \u044f \u043f\u043e\u043a\u0430\u0436\u0443 \u0432\u0441\u044e \u0441\u0432\u043e\u044e \u0433\u0440\u043e\u0437\u043d\u0443\u044e \u043a\u0438\u0431\u0435\u0440\u043c\u0430\u0433\u0438\u0447\u0435\u0441\u043a\u0443\u044e \u0441\u0438\u043b\u0443.",
+    "extra": "\u041d\u0435\u043c\u043d\u043e\u0433\u043e \u044d\u043b\u0435\u043a\u0442\u0440\u043e\u043d\u043d\u043e\u0439 \u043c\u0430\u0433\u0438\u0438, \u043d\u0435\u0441\u043c\u043e\u0442\u0440\u044f \u043d\u0430 \u043d\u0435\u043a\u043e\u0442\u043e\u0440\u0443\u044e \u0441\u0442\u0430\u0440\u043e\u043c\u043e\u0434\u043d\u043e\u0441\u0442\u044c, \u043d\u0438\u043a\u043e\u0433\u0434\u0430 \u043d\u0435 \u043f\u043e\u043c\u0435\u0448\u0430\u0435\u0442.^^\u0412\u0430\u0436\u043d\u043e\u0435 \u043d\u0430\u043f\u043e\u043c\u0438\u043d\u0430\u043d\u0438\u0435."
+   },
+   {
+    "langid": 1051,
+    "name": "Merlin",
+    "desc": "Som v\u00e1\u0161 m\u00fadry a z\u00e1zra\u010dn\u00fd spolo\u010dn\u00edk. Ak potrebujete pomoc, vyzvite ma a ja v\u00e1m predvediem svoje ohromuj\u00face kyberneticko-magick\u00e9 schopnosti.",
+    "extra": "Mal\u00e9 digit\u00e1lne k\u00fazlo je v\u017edy u\u017eito\u010dn\u00e9, aj ke\u010f u\u017e tro\u0161ku vy\u0161lo z m\u00f3dy.^^Tu je d\u00f4le\u017eit\u00e9 upozornenie."
+   },
+   {
+    "langid": 1060,
+    "name": "Merlin",
+    "desc": "Sem va\u0161 modri in s \u010darovnijami dobro podkovani spremljevalec. Ko potrebujete pomo\u010d, me pokli\u010dite in pokazal vam bom spo\u0161tovanje vzbujajo\u010de kibernetsko-\u010darobne mo\u010di.",
+    "extra": "\u010ceprav je malce staromodno, kan\u010dek digitalne \u010darovnije nikoli ne \u0161kodi.^^Tukaj je pomemben opomnin."
+   },
+   {
+    "langid": 3082,
+    "name": "Merl\u00edn",
+    "desc": "Soy su m\u00e1gico y sabio compa\u00f1ero. Cuando precise ayuda, inv\u00f3queme y presenciar\u00e1 una asombrosa demostraci\u00f3n de mis ciberpoderes m\u00e1gicos.",
+    "extra": "Aunque est\u00e9 un poco pasada de moda, un poco de magia digital siempre es \u00fatil.^^Aqu\u00ed tiene un aviso importante."
+   },
+   {
+    "langid": 1053,
+    "name": "Trollkarlen",
+    "desc": "Jag \u00e4r din kloka och magiska medarbetare. Om du kallar p\u00e5 mig s\u00e5 kan du f\u00e5 hj\u00e4lp av mina cybermagiska krafter.",
+    "extra": "\u00c4ven om det verkar lite gammalmodigt, s\u00e5 kan sm\u00e5 digitala trollkonster vara till stor hj\u00e4lp.^^Det h\u00e4r \u00e4r en viktig p\u00e5minnelse."
+   },
+   {
+    "langid": 1055,
+    "name": "Merlin",
+    "desc": "Ben sizin bilge ve b\u00fcy\u00fcl\u00fc arkada\u015f\u0131n\u0131z\u0131m. Yard\u0131m gerekti\u011finde m\u00fcthi\u015f b\u00fcy\u00fcl\u00fc g\u00fc\u00e7lerimin bir g\u00f6sterisini g\u00f6rmek i\u00e7in beni \u00e7a\u011f\u0131r\u0131n.",
+    "extra": "Bu arada, biraz eski moda say\u0131sal m\u00fczik her zaman yard\u0131mc\u0131 olur.^^Size \u00f6nemli bir an\u0131msatma."
+   }
+  ]
+ },
+ "num_animations": 73,
+ "image_list_size": 7372,
+ "audio_list_size": 388,
+ "num_images": 614,
+ "num_audios": 32,
+ "animations": [
+  {
+   "name": "RestPose",
+   "transition": 2,
+   "return": "",
+   "frames": 1,
+   "duration_cs": 10,
+   "sounds": [],
+   "has_overlays": true,
+   "branches": false,
+   "exit_to": []
+  },
+  {
+   "name": "Blink",
+   "transition": 2,
+   "return": "",
+   "frames": 4,
+   "duration_cs": 55,
+   "sounds": [],
+   "has_overlays": false,
+   "branches": false,
+   "exit_to": []
+  },
+  {
+   "name": "Idle2_2",
+   "transition": 2,
+   "return": "",
+   "frames": 16,
+   "duration_cs": 765,
+   "sounds": [],
+   "has_overlays": false,
+   "branches": true,
+   "exit_to": [
+    0,
+    1,
+    2,
+    3,
+    7,
+    12,
+    13,
+    14,
+    15
+   ]
+  },
+  {
+   "name": "Idle2_1",
+   "transition": 2,
+   "return": "",
+   "frames": 26,
+   "duration_cs": 563,
+   "sounds": [],
+   "has_overlays": false,
+   "branches": true,
+   "exit_to": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    8,
+    9,
+    10,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    25
+   ]
+  },
+  {
+   "name": "Idle1_1",
+   "transition": 1,
+   "return": "",
+   "frames": 10,
+   "duration_cs": 360,
+   "sounds": [],
+   "has_overlays": false,
+   "branches": true,
+   "exit_to": [
+    0,
+    1,
+    2,
+    5,
+    7,
+    8
+   ]
+  },
+  {
+   "name": "Idle1_3",
+   "transition": 1,
+   "return": "",
+   "frames": 10,
+   "duration_cs": 270,
+   "sounds": [],
+   "has_overlays": false,
+   "branches": true,
+   "exit_to": [
+    0,
+    3,
+    7,
+    8
+   ]
+  },
+  {
+   "name": "Idle1_2",
+   "transition": 1,
+   "return": "",
+   "frames": 11,
+   "duration_cs": 270,
+   "sounds": [],
+   "has_overlays": false,
+   "branches": true,
+   "exit_to": [
+    0,
+    1,
+    2,
+    3,
+    6,
+    7,
+    9,
+    10
+   ]
+  },
+  {
+   "name": "Idle1_4",
+   "transition": 1,
+   "return": "",
+   "frames": 13,
+   "duration_cs": 320,
+   "sounds": [],
+   "has_overlays": false,
+   "branches": true,
+   "exit_to": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    8,
+    9,
+    10,
+    11
+   ]
+  },
+  {
+   "name": "Greet",
+   "transition": 1,
+   "return": "",
+   "frames": 15,
+   "duration_cs": 145,
+   "sounds": [],
+   "has_overlays": true,
+   "branches": true,
+   "exit_to": [
+    0,
+    2,
+    3,
+    4,
+    8,
+    9,
+    13,
+    14
+   ]
+  },
+  {
+   "name": "Idle3_1",
+   "transition": 2,
+   "return": "",
+   "frames": 28,
+   "duration_cs": 485,
+   "sounds": [
+    1,
+    2
+   ],
+   "has_overlays": false,
+   "branches": true,
+   "exit_to": [
+    0,
+    3,
+    4,
+    8,
+    12,
+    16,
+    21,
+    22,
+    24,
+    25,
+    26,
+    27
+   ]
+  },
+  {
+   "name": "GestureUp",
+   "transition": 1,
+   "return": "",
+   "frames": 7,
+   "duration_cs": 60,
+   "sounds": [],
+   "has_overlays": true,
+   "branches": false,
+   "exit_to": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    6
+   ]
+  },
+  {
+   "name": "GestureDown",
+   "transition": 1,
+   "return": "",
+   "frames": 7,
+   "duration_cs": 60,
+   "sounds": [],
+   "has_overlays": true,
+   "branches": false,
+   "exit_to": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    6
+   ]
+  },
+  {
+   "name": "GestureLeft",
+   "transition": 1,
+   "return": "",
+   "frames": 6,
+   "duration_cs": 50,
+   "sounds": [],
+   "has_overlays": true,
+   "branches": false,
+   "exit_to": [
+    0,
+    1,
+    2,
+    3,
+    5
+   ]
+  },
+  {
+   "name": "GestureRight",
+   "transition": 1,
+   "return": "",
+   "frames": 6,
+   "duration_cs": 50,
+   "sounds": [],
+   "has_overlays": true,
+   "branches": false,
+   "exit_to": [
+    0,
+    1,
+    2,
+    3,
+    5
+   ]
+  },
+  {
+   "name": "Show",
+   "transition": 2,
+   "return": "",
+   "frames": 10,
+   "duration_cs": 100,
+   "sounds": [
+    3
+   ],
+   "has_overlays": false,
+   "branches": false,
+   "exit_to": [
+    9
+   ]
+  },
+  {
+   "name": "Hide",
+   "transition": 2,
+   "return": "",
+   "frames": 16,
+   "duration_cs": 125,
+   "sounds": [
+    4
+   ],
+   "has_overlays": false,
+   "branches": true,
+   "exit_to": [
+    0,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    15
+   ]
+  },
+  {
+   "name": "Hearing_4",
+   "transition": 2,
+   "return": "",
+   "frames": 6,
+   "duration_cs": 373,
+   "sounds": [],
+   "has_overlays": false,
+   "branches": true,
+   "exit_to": [
+    0,
+    2,
+    5
+   ]
+  },
+  {
+   "name": "Hearing_1",
+   "transition": 2,
+   "return": "",
+   "frames": 6,
+   "duration_cs": 403,
+   "sounds": [],
+   "has_overlays": false,
+   "branches": true,
+   "exit_to": [
+    0,
+    2,
+    5
+   ]
+  },
+  {
+   "name": "Hearing_2",
+   "transition": 2,
+   "return": "",
+   "frames": 6,
+   "duration_cs": 403,
+   "sounds": [],
+   "has_overlays": false,
+   "branches": true,
+   "exit_to": [
+    0,
+    2,
+    5
+   ]
+  },
+  {
+   "name": "Hearing_3",
+   "transition": 2,
+   "return": "",
+   "frames": 6,
+   "duration_cs": 393,
+   "sounds": [],
+   "has_overlays": false,
+   "branches": true,
+   "exit_to": [
+    0,
+    2,
+    5
+   ]
+  },
+  {
+   "name": "Alert",
+   "transition": 1,
+   "return": "",
+   "frames": 3,
+   "duration_cs": 6,
+   "sounds": [],
+   "has_overlays": true,
+   "branches": false,
+   "exit_to": [
+    0,
+    2
+   ]
+  },
+  {
+   "name": "Explain",
+   "transition": 1,
+   "return": "",
+   "frames": 7,
+   "duration_cs": 60,
+   "sounds": [],
+   "has_overlays": true,
+   "branches": false,
+   "exit_to": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    6
+   ]
+  },
+  {
+   "name": "Processing",
+   "transition": 1,
+   "return": "",
+   "frames": 28,
+   "duration_cs": 519,
+   "sounds": [
+    5,
+    6,
+    7,
+    8
+   ],
+   "has_overlays": false,
+   "branches": true,
+   "exit_to": [
+    0,
+    1,
+    2,
+    3,
+    5,
+    19,
+    22,
+    23,
+    24,
+    27
+   ]
+  },
+  {
+   "name": "Thinking",
+   "transition": 1,
+   "return": "",
+   "frames": 14,
+   "duration_cs": 740,
+   "sounds": [],
+   "has_overlays": true,
+   "branches": true,
+   "exit_to": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    10,
+    13
+   ]
+  },
+  {
+   "name": "Searching",
+   "transition": 1,
+   "return": "",
+   "frames": 20,
+   "duration_cs": 630,
+   "sounds": [
+    9,
+    10,
+    11
+   ],
+   "has_overlays": false,
+   "branches": true,
+   "exit_to": [
+    0,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    19
+   ]
+  },
+  {
+   "name": "Acknowledge",
+   "transition": 2,
+   "return": "",
+   "frames": 9,
+   "duration_cs": 75,
+   "sounds": [],
+   "has_overlays": false,
+   "branches": false,
+   "exit_to": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    7,
+    8
+   ]
+  },
+  {
+   "name": "Wave",
+   "transition": 1,
+   "return": "",
+   "frames": 17,
+   "duration_cs": 160,
+   "sounds": [],
+   "has_overlays": true,
+   "branches": false,
+   "exit_to": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    8,
+    16
+   ]
+  },
+  {
+   "name": "DontRecognize",
+   "transition": 1,
+   "return": "",
+   "frames": 7,
+   "duration_cs": 60,
+   "sounds": [],
+   "has_overlays": true,
+   "branches": false,
+   "exit_to": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    6
+   ]
+  },
+  {
+   "name": "Uncertain",
+   "transition": 1,
+   "return": "",
+   "frames": 6,
+   "duration_cs": 50,
+   "sounds": [],
+   "has_overlays": true,
+   "branches": false,
+   "exit_to": [
+    0,
+    1,
+    2,
+    3,
+    5
+   ]
+  },
+  {
+   "name": "Decline",
+   "transition": 1,
+   "return": "",
+   "frames": 13,
+   "duration_cs": 190,
+   "sounds": [],
+   "has_overlays": true,
+   "branches": true,
+   "exit_to": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    7,
+    9,
+    12
+   ]
+  },
+  {
+   "name": "Sad",
+   "transition": 1,
+   "return": "",
+   "frames": 6,
+   "duration_cs": 50,
+   "sounds": [],
+   "has_overlays": true,
+   "branches": false,
+   "exit_to": [
+    0,
+    1,
+    2,
+    3,
+    5
+   ]
+  },
+  {
+   "name": "StopListening",
+   "transition": 1,
+   "return": "",
+   "frames": 7,
+   "duration_cs": 60,
+   "sounds": [],
+   "has_overlays": true,
+   "branches": false,
+   "exit_to": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    6
+   ]
+  },
+  {
+   "name": "GetAttention",
+   "transition": 2,
+   "return": "",
+   "frames": 11,
+   "duration_cs": 120,
+   "sounds": [
+    12
+   ],
+   "has_overlays": true,
+   "branches": false,
+   "exit_to": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    10
+   ]
+  },
+  {
+   "name": "GetAttentionReturn",
+   "transition": 2,
+   "return": "",
+   "frames": 5,
+   "duration_cs": 50,
+   "sounds": [],
+   "has_overlays": false,
+   "branches": false,
+   "exit_to": []
+  },
+  {
+   "name": "Idle3_2",
+   "transition": 1,
+   "return": "",
+   "frames": 24,
+   "duration_cs": 988,
+   "sounds": [
+    13
+   ],
+   "has_overlays": false,
+   "branches": true,
+   "exit_to": [
+    0,
+    1,
+    2,
+    8,
+    10,
+    12,
+    13,
+    14,
+    16,
+    23
+   ]
+  },
+  {
+   "name": "Surprised",
+   "transition": 1,
+   "return": "",
+   "frames": 8,
+   "duration_cs": 70,
+   "sounds": [
+    14
+   ],
+   "has_overlays": true,
+   "branches": true,
+   "exit_to": [
+    0,
+    3,
+    4,
+    5,
+    6,
+    7
+   ]
+  },
+  {
+   "name": "Congratulate_2",
+   "transition": 1,
+   "return": "",
+   "frames": 20,
+   "duration_cs": 168,
+   "sounds": [
+    15,
+    16,
+    17,
+    18
+   ],
+   "has_overlays": true,
+   "branches": true,
+   "exit_to": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    19
+   ]
+  },
+  {
+   "name": "Reading",
+   "transition": 1,
+   "return": "",
+   "frames": 35,
+   "duration_cs": 965,
+   "sounds": [
+    5,
+    9,
+    19,
+    20
+   ],
+   "has_overlays": false,
+   "branches": true,
+   "exit_to": [
+    0,
+    13,
+    27,
+    28,
+    29,
+    30,
+    31,
+    32,
+    33,
+    34
+   ]
+  },
+  {
+   "name": "Announce",
+   "transition": 1,
+   "return": "",
+   "frames": 38,
+   "duration_cs": 370,
+   "sounds": [
+    21,
+    22,
+    23
+   ],
+   "has_overlays": true,
+   "branches": true,
+   "exit_to": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    25,
+    26,
+    27,
+    29,
+    30,
+    31,
+    32,
+    33,
+    34,
+    35,
+    36,
+    37
+   ]
+  },
+  {
+   "name": "Read",
+   "transition": 2,
+   "return": "",
+   "frames": 20,
+   "duration_cs": 250,
+   "sounds": [
+    5,
+    9
+   ],
+   "has_overlays": true,
+   "branches": true,
+   "exit_to": [
+    0,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19
+   ]
+  },
+  {
+   "name": "ReadReturn",
+   "transition": 2,
+   "return": "",
+   "frames": 8,
+   "duration_cs": 80,
+   "sounds": [
+    5
+   ],
+   "has_overlays": false,
+   "branches": false,
+   "exit_to": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+   ]
+  },
+  {
+   "name": "Writing",
+   "transition": 1,
+   "return": "",
+   "frames": 26,
+   "duration_cs": 635,
+   "sounds": [
+    5,
+    9,
+    24,
+    25
+   ],
+   "has_overlays": false,
+   "branches": true,
+   "exit_to": [
+    1,
+    2,
+    3,
+    4,
+    17,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25
+   ]
+  },
+  {
+   "name": "Write",
+   "transition": 2,
+   "return": "",
+   "frames": 22,
+   "duration_cs": 320,
+   "sounds": [
+    5,
+    9,
+    24
+   ],
+   "has_overlays": true,
+   "branches": true,
+   "exit_to": [
+    1,
+    2,
+    7,
+    8,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21
+   ]
+  },
+  {
+   "name": "WriteReturn",
+   "transition": 2,
+   "return": "",
+   "frames": 5,
+   "duration_cs": 45,
+   "sounds": [
+    5
+   ],
+   "has_overlays": false,
+   "branches": false,
+   "exit_to": [
+    1,
+    2,
+    3,
+    4
+   ]
+  },
+  {
+   "name": "Congratulate",
+   "transition": 1,
+   "return": "",
+   "frames": 25,
+   "duration_cs": 310,
+   "sounds": [
+    5,
+    26
+   ],
+   "has_overlays": true,
+   "branches": true,
+   "exit_to": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    13,
+    14,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24
+   ]
+  },
+  {
+   "name": "Confused",
+   "transition": 1,
+   "return": "",
+   "frames": 15,
+   "duration_cs": 140,
+   "sounds": [
+    27
+   ],
+   "has_overlays": true,
+   "branches": false,
+   "exit_to": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    14
+   ]
+  },
+  {
+   "name": "Suggest",
+   "transition": 1,
+   "return": "",
+   "frames": 14,
+   "duration_cs": 130,
+   "sounds": [
+    28
+   ],
+   "has_overlays": true,
+   "branches": true,
+   "exit_to": [
+    0,
+    1,
+    3,
+    4,
+    5,
+    9,
+    10,
+    11,
+    12,
+    13
+   ]
+  },
+  {
+   "name": "MoveRight",
+   "transition": 1,
+   "return": "",
+   "frames": 20,
+   "duration_cs": 230,
+   "sounds": [
+    29,
+    30
+   ],
+   "has_overlays": false,
+   "branches": true,
+   "exit_to": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    6,
+    8,
+    9,
+    16,
+    17,
+    18,
+    19
+   ]
+  },
+  {
+   "name": "MoveLeft",
+   "transition": 1,
+   "return": "",
+   "frames": 20,
+   "duration_cs": 230,
+   "sounds": [
+    29,
+    30
+   ],
+   "has_overlays": false,
+   "branches": true,
+   "exit_to": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    6,
+    8,
+    9,
+    16,
+    17,
+    18,
+    19
+   ]
+  },
+  {
+   "name": "MoveUp",
+   "transition": 1,
+   "return": "",
+   "frames": 19,
+   "duration_cs": 210,
+   "sounds": [
+    29,
+    30
+   ],
+   "has_overlays": false,
+   "branches": true,
+   "exit_to": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    8,
+    9,
+    15,
+    16,
+    17,
+    18
+   ]
+  },
+  {
+   "name": "MoveDown",
+   "transition": 1,
+   "return": "",
+   "frames": 21,
+   "duration_cs": 230,
+   "sounds": [
+    29,
+    30
+   ],
+   "has_overlays": false,
+   "branches": true,
+   "exit_to": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    8,
+    9,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20
+   ]
+  },
+  {
+   "name": "StartListening",
+   "transition": 1,
+   "return": "",
+   "frames": 7,
+   "duration_cs": 60,
+   "sounds": [],
+   "has_overlays": true,
+   "branches": false,
+   "exit_to": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    6
+   ]
+  },
+  {
+   "name": "WriteContinued",
+   "transition": 2,
+   "return": "",
+   "frames": 21,
+   "duration_cs": 225,
+   "sounds": [
+    5,
+    24,
+    25
+   ],
+   "has_overlays": true,
+   "branches": true,
+   "exit_to": [
+    0,
+    1,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20
+   ]
+  },
+  {
+   "name": "DoMagic1",
+   "transition": 2,
+   "return": "",
+   "frames": 20,
+   "duration_cs": 190,
+   "sounds": [],
+   "has_overlays": true,
+   "branches": true,
+   "exit_to": [
+    0,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19
+   ]
+  },
+  {
+   "name": "DoMagic2",
+   "transition": 1,
+   "return": "",
+   "frames": 19,
+   "duration_cs": 176,
+   "sounds": [
+    31
+   ],
+   "has_overlays": false,
+   "branches": true,
+   "exit_to": [
+    0,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18
+   ]
+  },
+  {
+   "name": "LookDown",
+   "transition": 2,
+   "return": "",
+   "frames": 5,
+   "duration_cs": 40,
+   "sounds": [],
+   "has_overlays": false,
+   "branches": false,
+   "exit_to": [
+    0,
+    1,
+    2,
+    4
+   ]
+  },
+  {
+   "name": "LookDownBlink",
+   "transition": 2,
+   "return": "",
+   "frames": 9,
+   "duration_cs": 470,
+   "sounds": [],
+   "has_overlays": false,
+   "branches": true,
+   "exit_to": [
+    5,
+    6,
+    7,
+    8
+   ]
+  },
+  {
+   "name": "LookDownReturn",
+   "transition": 2,
+   "return": "",
+   "frames": 4,
+   "duration_cs": 40,
+   "sounds": [],
+   "has_overlays": false,
+   "branches": false,
+   "exit_to": [
+    1,
+    2,
+    3
+   ]
+  },
+  {
+   "name": "LookLeft",
+   "transition": 2,
+   "return": "",
+   "frames": 5,
+   "duration_cs": 40,
+   "sounds": [],
+   "has_overlays": false,
+   "branches": false,
+   "exit_to": [
+    0,
+    1,
+    2,
+    4
+   ]
+  },
+  {
+   "name": "LookLeftBlink",
+   "transition": 2,
+   "return": "",
+   "frames": 9,
+   "duration_cs": 470,
+   "sounds": [],
+   "has_overlays": false,
+   "branches": true,
+   "exit_to": [
+    2,
+    4,
+    5,
+    6,
+    7,
+    8
+   ]
+  },
+  {
+   "name": "LookLeftReturn",
+   "transition": 2,
+   "return": "",
+   "frames": 4,
+   "duration_cs": 40,
+   "sounds": [],
+   "has_overlays": false,
+   "branches": false,
+   "exit_to": [
+    1,
+    2,
+    3
+   ]
+  },
+  {
+   "name": "LookRight",
+   "transition": 2,
+   "return": "",
+   "frames": 5,
+   "duration_cs": 35,
+   "sounds": [],
+   "has_overlays": false,
+   "branches": false,
+   "exit_to": [
+    0,
+    1,
+    2,
+    4
+   ]
+  },
+  {
+   "name": "LookRightBlink",
+   "transition": 2,
+   "return": "",
+   "frames": 9,
+   "duration_cs": 470,
+   "sounds": [],
+   "has_overlays": false,
+   "branches": true,
+   "exit_to": [
+    2,
+    4,
+    5,
+    6,
+    7,
+    8
+   ]
+  },
+  {
+   "name": "LookRightReturn",
+   "transition": 2,
+   "return": "",
+   "frames": 4,
+   "duration_cs": 40,
+   "sounds": [],
+   "has_overlays": false,
+   "branches": false,
+   "exit_to": [
+    1,
+    2,
+    3
+   ]
+  },
+  {
+   "name": "LookUp",
+   "transition": 2,
+   "return": "",
+   "frames": 5,
+   "duration_cs": 35,
+   "sounds": [],
+   "has_overlays": false,
+   "branches": false,
+   "exit_to": [
+    0,
+    1,
+    2,
+    4
+   ]
+  },
+  {
+   "name": "LookUpBlink",
+   "transition": 2,
+   "return": "",
+   "frames": 9,
+   "duration_cs": 470,
+   "sounds": [],
+   "has_overlays": false,
+   "branches": true,
+   "exit_to": [
+    2,
+    4,
+    5,
+    6,
+    7,
+    8
+   ]
+  },
+  {
+   "name": "LookUpReturn",
+   "transition": 2,
+   "return": "",
+   "frames": 4,
+   "duration_cs": 40,
+   "sounds": [],
+   "has_overlays": false,
+   "branches": false,
+   "exit_to": [
+    1,
+    2,
+    3
+   ]
+  },
+  {
+   "name": "ReadContinued",
+   "transition": 2,
+   "return": "",
+   "frames": 23,
+   "duration_cs": 360,
+   "sounds": [
+    5
+   ],
+   "has_overlays": true,
+   "branches": true,
+   "exit_to": [
+    0,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19,
+    20,
+    21,
+    22
+   ]
+  },
+  {
+   "name": "Pleased",
+   "transition": 1,
+   "return": "",
+   "frames": 6,
+   "duration_cs": 50,
+   "sounds": [],
+   "has_overlays": true,
+   "branches": false,
+   "exit_to": [
+    0,
+    1,
+    2,
+    3,
+    5
+   ]
+  },
+  {
+   "name": "GetAttentionContinued",
+   "transition": 2,
+   "return": "",
+   "frames": 10,
+   "duration_cs": 75,
+   "sounds": [
+    12
+   ],
+   "has_overlays": true,
+   "branches": true,
+   "exit_to": [
+    0,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9
+   ]
+  },
+  {
+   "name": "Process",
+   "transition": 2,
+   "return": "",
+   "frames": 33,
+   "duration_cs": 579,
+   "sounds": [
+    5,
+    6,
+    7,
+    8
+   ],
+   "has_overlays": false,
+   "branches": true,
+   "exit_to": [
+    28,
+    29,
+    30,
+    31,
+    32
+   ]
+  },
+  {
+   "name": "Search",
+   "transition": 2,
+   "return": "",
+   "frames": 24,
+   "duration_cs": 685,
+   "sounds": [
+    9,
+    10,
+    11
+   ],
+   "has_overlays": false,
+   "branches": true,
+   "exit_to": [
+    23
+   ]
+  },
+  {
+   "name": "Think",
+   "transition": 1,
+   "return": "",
+   "frames": 7,
+   "duration_cs": 80,
+   "sounds": [],
+   "has_overlays": true,
+   "branches": false,
+   "exit_to": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    6
+   ]
+  }
+ ]
+}
