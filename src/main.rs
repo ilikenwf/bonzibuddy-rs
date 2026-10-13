@@ -208,19 +208,16 @@ fn reset_zoom(app: &mut App) {
     let sf = w.scale_factor();
     let _ = w.request_inner_size(LogicalSize::new(WIN_W as f64, WIN_H as f64));
     if let Some(m) = w.current_monitor() {
-        // Full monitor bounds (winit has no work-area API); good enough to
-        // pull a lost window back on screen.
+        // Clamp into the monitor's work area (taskbar-aware via
+        // _NET_WORKAREA on X11; full monitor bounds otherwise).
         let mp = m.position();
         let ms = m.size();
+        let wa = pick_workarea(&workarea::rects(), mp.x, mp.y, ms.width as i32, ms.height as i32);
         let nw = (WIN_W as f64 * sf) as i32;
         let nh = (WIN_H as f64 * sf) as i32;
         let p = w.outer_position().unwrap_or(PhysicalPosition::new(mp.x, mp.y));
-        let max_x = (mp.x + ms.width as i32 - nw).max(mp.x);
-        let max_y = (mp.y + ms.height as i32 - nh).max(mp.y);
-        w.set_outer_position(Position::Physical(PhysicalPosition::new(
-            p.x.clamp(mp.x, max_x),
-            p.y.clamp(mp.y, max_y),
-        )));
+        let (nx, ny) = clamp_to_workarea(p.x, p.y, nw, nh, wa);
+        w.set_outer_position(Position::Physical(PhysicalPosition::new(nx, ny)));
     }
     save_state(Some(w), 1.0);
     app.pet.say("Phew, that's better — nice and comfy!", 4.0);
@@ -1010,17 +1007,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     (o.x, o.y, s.width as i32, s.height as i32)
                 })
                 .unwrap_or((0, 0, 1920, 1080));
+            // Work area, not full monitor bounds (MS Agent §5): the taskbar
+            // top is the walk floor and the clamp edge. Falls back to the
+            // monitor rect where EWMH provides no _NET_WORKAREA.
+            let wa = pick_workarea(&workarea::rects(), ax, ay, aw, ah);
+            let (wax, way, waw, wah) = wa;
             let sf0 = window.scale_factor();
             let ww = (WIN_W as f64 * app.opts.scale * sf0) as i32;
             let wh = (WIN_H as f64 * app.opts.scale * sf0) as i32;
             // Restore the saved position when it is still on-screen.
             let pos = match saved_pos {
-                (Some(x), Some(y)) if x >= ax - ww && x <= ax + aw && y >= ay && y <= ay + ah => {
+                (Some(x), Some(y)) if x >= wax - ww && x <= wax + waw && y >= way && y <= way + wah => {
                     (x, y)
                 }
-                _ => (ax + aw - ww - 40, ay + ah - wh - 20),
+                // Default: bottom-right of the work area — Bonzi stands on
+                // the taskbar, not under it.
+                _ => (wax + waw - ww - 40, way + wah - wh),
             };
-            window.set_outer_position(Position::Physical(PhysicalPosition::new(pos.0, pos.1)));
+            let (px, py) = clamp_to_workarea(pos.0, pos.1, ww, wh, wa);
+            window.set_outer_position(Position::Physical(PhysicalPosition::new(px, py)));
             let window = Arc::new(window);
             if let Ok(ico) = image::open(app.assets.root().join("favicon.ico")) {
                 let img = ico.to_rgba8();
@@ -1120,7 +1125,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         app.dragging = true;
                         if let Some(window) = &app.window {
                             let (ax, ay, aw, ah) = window
-                                .primary_monitor()
+                                .current_monitor()
+                                .or_else(|| window.primary_monitor())
                                 .map(|m| {
                                     (
                                         m.position().x,
@@ -1130,8 +1136,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     )
                                 })
                                 .unwrap_or((0, 0, 1920, 1080));
-                            let nx = (wpx as f64 + dx).clamp(ax as f64, (ax + aw) as f64);
-                            let ny = (wpy as f64 + dy).clamp(ay as f64, (ay + ah) as f64);
+                            // User drag drops anywhere in the work area (§5).
+                            let (wax, way, waw, wah) = pick_workarea(&workarea::rects(), ax, ay, aw, ah);
+                            let nx = (wpx as f64 + dx).clamp(wax as f64, (wax + waw) as f64);
+                            let ny = (wpy as f64 + dy).clamp(way as f64, (way + wah) as f64);
                             window.set_outer_position(Position::Physical(PhysicalPosition::new(
                                 nx as i32, ny as i32,
                             )));
@@ -1197,20 +1205,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         if dx != 0 {
                             if let Some(window) = window {
-                                let (ax, aw) = window
-                                    .primary_monitor()
-                                    .map(|m| (m.position().x, m.size().width as i32))
-                                    .unwrap_or((0, 1920));
+                                let (ax, ay, aw, ah) = window
+                                    .current_monitor()
+                                    .or_else(|| window.primary_monitor())
+                                    .map(|m| {
+                                        (m.position().x, m.position().y, m.size().width as i32, m.size().height as i32)
+                                    })
+                                    .unwrap_or((0, 0, 1920, 1080));
+                                // Bounce off the work-area edges, not the raw
+                                // monitor edges (MS Agent §5).
+                                let (wax, way, waw, wah) = pick_workarea(&workarea::rects(), ax, ay, aw, ah);
                                 let mut pos = window.outer_position().unwrap_or(PhysicalPosition::new(0, 0));
                                 pos.x += (dx as f64 * window.scale_factor() * opts.scale) as i32;
-                                if pos.x < ax {
-                                    pos.x = ax;
+                                if pos.x < wax {
+                                    pos.x = wax;
                                     pet.walk_dir = 1;
                                     pet.set_anim("MOVERIGHT", true);
-                                } else if pos.x > ax + aw - size.0 as i32 {
-                                    pos.x = ax + aw - size.0 as i32;
+                                } else if pos.x > wax + waw - size.0 as i32 {
+                                    pos.x = wax + waw - size.0 as i32;
                                     pet.walk_dir = -1;
                                     pet.set_anim("MOVELEFT", true);
+                                }
+                                // The taskbar top is the floor: if the taskbar
+                                // grew (or moved to the bottom) since the
+                                // window was placed, lift Bonzi back onto it.
+                                if pos.y + size.1 as i32 > way + wah {
+                                    pos.y = (way + wah - size.1 as i32).max(way);
                                 }
                                 window.set_outer_position(Position::Physical(pos));
                             }
@@ -1340,6 +1360,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     _ => {}
                 }
             }
+            // Work area rewritten (taskbar move/resize, resolution change —
+            // MS Agent's SystemMoved keeping, §5): pull Bonzi back inside
+            // the usable desktop.
+            if workarea::changed() {
+                if let Some(w) = &app.window {
+                    let (mx, my, mw, mh) = w
+                        .current_monitor()
+                        .or_else(|| w.primary_monitor())
+                        .map(|m| {
+                            (
+                                m.position().x,
+                                m.position().y,
+                                m.size().width as i32,
+                                m.size().height as i32,
+                            )
+                        })
+                        .unwrap_or((0, 0, 1920, 1080));
+                    let wa = pick_workarea(&workarea::rects(), mx, my, mw, mh);
+                    let p = w.outer_position().unwrap_or(PhysicalPosition::new(mx, my));
+                    let (nx, ny) = clamp_to_workarea(p.x, p.y, app.size.0 as i32, app.size.1 as i32, wa);
+                    if (nx, ny) != (p.x, p.y) {
+                        w.set_outer_position(Position::Physical(PhysicalPosition::new(nx, ny)));
+                        save_state(app.window.as_deref(), app.opts.scale);
+                    }
+                }
+            }
             if let Some(w) = &app.window {
                 w.request_redraw();
             }
@@ -1374,4 +1420,162 @@ fn user_idle_secs() -> Option<u64> {
 #[cfg(not(target_os = "linux"))]
 fn user_idle_secs() -> Option<u64> {
     None
+}
+
+/// X11 work-area tracking — the §5 equivalent of MS Agent's
+/// SPI_GETWORKAREA import plus its registered `TaskbarCreated` message:
+/// `_NET_WORKAREA` on the root window holds the usable desktop (monitor
+/// minus taskbar/docks) as four CARDINALs per monitor, and a PropertyNotify
+/// on it fires when the taskbar moves/resizes or the resolution changes.
+/// Platforms without an EWMH query fall back to full monitor bounds.
+#[cfg(target_os = "linux")]
+mod workarea {
+    use std::cell::Cell;
+    use x11rb::connection::Connection as _;
+    use x11rb::protocol::xproto::{
+        Atom, AtomEnum, ChangeWindowAttributesAux, ConnectionExt as _, EventMask, Window,
+    };
+    use x11rb::protocol::Event;
+    use x11rb::rust_connection::RustConnection;
+
+    struct Handle {
+        conn: RustConnection,
+        root: Window,
+        wa_atom: Atom,
+        dirty: Cell<bool>,
+    }
+
+    fn connect() -> Option<Handle> {
+        let (conn, screen) = x11rb::connect(None).ok()?;
+        let root = conn.setup().roots[screen].root;
+        let wa_atom = conn.intern_atom(false, b"_NET_WORKAREA").ok()?.reply().ok()?.atom;
+        // Watch the root for work-area rewrites (the TaskbarCreated signal).
+        conn.change_window_attributes(
+            root,
+            &ChangeWindowAttributesAux {
+                event_mask: Some(EventMask::PROPERTY_CHANGE),
+                ..Default::default()
+            },
+        )
+        .ok()?
+        .ignore_error();
+        conn.flush().ok()?;
+        Some(Handle { conn, root, wa_atom, dirty: Cell::new(false) })
+    }
+
+    thread_local! {
+        static X: Option<Handle> = connect();
+    }
+
+    /// `_NET_WORKAREA` rectangles (x, y, w, h), one per monitor; empty when
+    /// no EWMH window manager publishes the property.
+    pub fn rects() -> Vec<(i32, i32, i32, i32)> {
+        X.with(|x| {
+            let h = x.as_ref()?;
+            let reply = h
+                .conn
+                .get_property(false, h.root, h.wa_atom, AtomEnum::CARDINAL, 0, 1024)
+                .ok()?
+                .reply()
+                .ok()?;
+            let vals: Vec<u32> = reply.value32()?.collect();
+            Some(
+                vals.chunks_exact(4)
+                    .map(|c| (c[0] as i32, c[1] as i32, c[2] as i32, c[3] as i32))
+                    .collect(),
+            )
+        })
+        .unwrap_or_default()
+    }
+
+    /// Drain pending X events; true when `_NET_WORKAREA` was rewritten since
+    /// the last call (taskbar move/resize, resolution change — MS Agent's
+    /// SystemMoved trigger).
+    pub fn changed() -> bool {
+        X.with(|x| {
+            let h = x.as_ref()?;
+            loop {
+                match h.conn.poll_for_event().ok()? {
+                    None => break,
+                    Some(Event::PropertyNotify(e)) if e.atom == h.wa_atom => {
+                        h.dirty.set(true);
+                    }
+                    Some(_) => {}
+                }
+            }
+            let d = h.dirty.get();
+            h.dirty.set(false);
+            Some(d)
+        })
+        .unwrap_or(false)
+    }
+}
+
+/// Non-X11 fallback: winit exposes only monitor bounds (Windows would use
+/// SPI_GETWORKAREA here); callers keep the full-monitor behavior.
+#[cfg(not(target_os = "linux"))]
+mod workarea {
+    pub fn rects() -> Vec<(i32, i32, i32, i32)> {
+        Vec::new()
+    }
+    pub fn changed() -> bool {
+        false
+    }
+}
+
+/// Pick the work-area rect belonging to the monitor at (mx, my); fall back
+/// to the full monitor rect when EWMH has nothing usable.
+fn pick_workarea(
+    rects: &[(i32, i32, i32, i32)],
+    mx: i32,
+    my: i32,
+    mw: i32,
+    mh: i32,
+) -> (i32, i32, i32, i32) {
+    rects
+        .iter()
+        .copied()
+        .find(|(x, y, _, _)| *x == mx && *y == my)
+        .unwrap_or((mx, my, mw, mh))
+}
+
+/// Clamp a window's top-left so the whole window stays inside the work area
+/// (MS Agent §5 on-screen keeping). A window larger than the work area pins
+/// to its top-left corner.
+fn clamp_to_workarea(x: i32, y: i32, w: i32, h: i32, wa: (i32, i32, i32, i32)) -> (i32, i32) {
+    let (ax, ay, aw, ah) = wa;
+    (
+        x.clamp(ax, (ax + aw - w).max(ax)),
+        y.clamp(ay, (ay + ah - h).max(ay)),
+    )
+}
+
+#[cfg(test)]
+mod geometry_tests {
+    use super::*;
+
+    #[test]
+    fn clamp_keeps_window_inside_work_area() {
+        let wa = (0, 0, 1920, 1040); // 40 px taskbar along the bottom
+        // Bottom edge under the taskbar: lifted onto its top.
+        assert_eq!(clamp_to_workarea(100, 1100, 340, 460, wa), (100, 580));
+        // Right edge past the monitor: pulled in.
+        assert_eq!(clamp_to_workarea(1800, 10, 340, 460, wa), (1580, 10));
+        // Already inside: untouched.
+        assert_eq!(clamp_to_workarea(100, 100, 340, 460, wa), (100, 100));
+        // Off the top-left: pinned to the work-area origin.
+        assert_eq!(clamp_to_workarea(-50, -50, 340, 460, wa), (0, 0));
+        // Second monitor offset to the right.
+        let wa2 = (1920, 0, 1280, 1020);
+        assert_eq!(clamp_to_workarea(3100, 500, 340, 460, wa2), (2860, 500));
+    }
+
+    #[test]
+    fn pick_workarea_matches_monitor_or_falls_back() {
+        let rects = [(0, 0, 1920, 1040), (1920, 0, 1280, 1020)];
+        assert_eq!(pick_workarea(&rects, 1920, 0, 1280, 1080), (1920, 0, 1280, 1020));
+        assert_eq!(pick_workarea(&rects, 0, 0, 1920, 1080), (0, 0, 1920, 1040));
+        // No EWMH data (or unknown monitor): full monitor bounds.
+        assert_eq!(pick_workarea(&[], 0, 0, 1920, 1080), (0, 0, 1920, 1080));
+    }
 }
