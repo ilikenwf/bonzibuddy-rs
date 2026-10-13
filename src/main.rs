@@ -403,6 +403,7 @@ fn test_audio() -> Result<(), Box<dyn std::error::Error>> {
 }
 const ABOUT: &str = "BonziBuddy-rs v1.0\nA safe reimagining of the 1999 original.\nNo phone-home. No ads. No spyware.\n100% offline. Original character art.\nRight-click me for the menu!";
 
+mod retro;
 mod settings_ui;
 /// Settings live in a forked child process running a *managed* window, so
 /// the WM focuses it and native text inputs work (paste, IME, dead keys).

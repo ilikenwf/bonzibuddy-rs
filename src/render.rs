@@ -36,6 +36,15 @@ impl Canvas {
         }
         self.px[i + 3] = (c[3] as u16 + self.px[i + 3] as u16 * da / 255).min(255) as u8;
     }
+    /// Axis-aligned solid rectangle (clipped to the canvas).
+    pub fn fill(&mut self, x: i32, y: i32, w: i32, h: i32, c: [u8; 4]) {
+        for yy in y..y + h {
+            for xx in x..x + w {
+                self.blend(xx, yy, c);
+            }
+        }
+    }
+
     /// Rounded rectangle: filled body + 2px border.
     pub fn round_rect(&mut self, x: i32, y: i32, w: i32, h: i32, r: i32, fill: [u8; 4], border: [u8; 4]) {
         for yy in y..y + h {
